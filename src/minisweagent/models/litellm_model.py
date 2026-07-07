@@ -21,6 +21,8 @@ from minisweagent.models.utils.openai_multimodal import expand_multimodal_conten
 from minisweagent.models.utils.retry import retry
 
 logger = logging.getLogger("litellm_model")
+litellm.suppress_debug_info = True
+litellm.set_verbose = False
 
 
 class LitellmModelConfig(BaseModel):
@@ -59,13 +61,23 @@ class LitellmModel:
         self.config = config_class(**kwargs)
         if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
             litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
+        # Extra tool schemas (chat-completion wrapper format) appended to BASH_TOOL on every
+        # request. Populated by callers like ``MemoryAgent`` that expose additional tools
+        # to the model. Default empty → behavior unchanged for vanilla agents.
+        self.extra_tools: list[dict] = []
+
+    def _tools(self) -> list[dict]:
+        return [BASH_TOOL, *self.extra_tools]
+
+    def _allowed_tool_names(self) -> set[str]:
+        return {t["function"]["name"] for t in self._tools()}
 
     def _query(self, messages: list[dict[str, str]], **kwargs):
         try:
             return litellm.completion(
                 model=self.config.model_name,
                 messages=messages,
-                tools=[BASH_TOOL],
+                tools=self._tools(),
                 **(self.config.model_kwargs | kwargs),
             )
         except litellm.exceptions.AuthenticationError as e:
@@ -115,7 +127,11 @@ class LitellmModel:
     def _parse_actions(self, response) -> list[dict]:
         """Parse tool calls from the response. Raises FormatError if unknown tool."""
         tool_calls = response.choices[0].message.tool_calls or []
-        return parse_toolcall_actions(tool_calls, format_error_template=self.config.format_error_template)
+        return parse_toolcall_actions(
+            tool_calls,
+            format_error_template=self.config.format_error_template,
+            allowed_tools=self._allowed_tool_names(),
+        )
 
     def format_message(self, **kwargs) -> dict:
         return expand_multimodal_content(kwargs, pattern=self.config.multimodal_regex)

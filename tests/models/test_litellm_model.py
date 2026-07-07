@@ -50,7 +50,11 @@ class TestLitellmModel:
 
         model = LitellmModel(model_name="gpt-4")
         result = model.query([{"role": "user", "content": "list files"}])
-        assert result["extra"]["actions"] == [{"command": "ls -la", "tool_call_id": "call_abc"}]
+        actions = result["extra"]["actions"]
+        assert len(actions) == 1
+        assert actions[0]["command"] == "ls -la"
+        assert actions[0]["tool_call_id"] == "call_abc"
+        assert actions[0]["tool_name"] == "bash"
 
     @patch("minisweagent.models.litellm_model.litellm.completion")
     @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")

@@ -77,11 +77,14 @@ def test_portkey_model_query():
                 messages = [{"role": "user", "content": "Hello!"}]
                 result = model.query(messages)
 
-                assert result["extra"]["actions"] == [{"command": "echo 'Hello!'", "tool_call_id": "call_123"}]
+                actions = result["extra"]["actions"]
+                assert len(actions) == 1
+                assert actions[0]["command"] == "echo 'Hello!'"
+                assert actions[0]["tool_call_id"] == "call_123"
+                assert actions[0]["tool_name"] == "bash"
                 assert result["extra"]["response"] == {"test": "response"}
                 assert result["extra"]["cost"] == 0.01
 
-                # Verify the API was called correctly with tools
                 mock_client.chat.completions.create.assert_called_once_with(
                     model="gpt-4o", messages=messages, tools=[BASH_TOOL]
                 )
@@ -145,7 +148,9 @@ def test_portkey_model_cost_tracking_ignore_errors():
                 messages = [{"role": "user", "content": "test"}]
                 result = model.query(messages)
 
-                assert result["extra"]["actions"] == [{"command": "echo test", "tool_call_id": "call_456"}]
+                actions = result["extra"]["actions"]
+                assert len(actions) == 1 and actions[0]["command"] == "echo test"
+                assert actions[0]["tool_call_id"] == "call_456" and actions[0]["tool_name"] == "bash"
                 assert result["extra"]["cost"] == 0.0
                 assert GLOBAL_MODEL_STATS.cost == initial_cost
 

@@ -22,6 +22,41 @@ def _make_model_from_fixture(text_outputs: list[str], cost_per_call: float = 1.0
     )
 
 
+def test_swebench_single_passes_instance_id_as_session_id(monkeypatch, tmp_path):
+    class DummyAgent:
+        def __init__(self):
+            self.calls = []
+
+        def run(self, task, **kwargs):
+            self.calls.append((task, kwargs))
+
+    agent = DummyAgent()
+    monkeypatch.setattr(
+        "minisweagent.run.benchmarks.swebench_single.load_swebench_dataset",
+        lambda subset, split: [{"instance_id": "repo__issue-1", "problem_statement": "fix it"}],
+    )
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench_single.get_sb_environment", lambda config, instance: object())
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench_single.get_model", lambda config: object())
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench_single.get_agent", lambda *args, **kwargs: agent)
+
+    main(
+        subset="ignored",
+        split="test",
+        instance_spec="repo__issue-1",
+        model_name="deterministic",
+        config_spec=["agent.system_template=x", "agent.instance_template={{ task }}", "model.model_name=test"],
+        environment_class="docker",
+        exit_immediately=True,
+        output=tmp_path / "out.json",
+        model_class=None,
+        agent_class=None,
+        yolo=False,
+        cost_limit=None,
+    )
+
+    assert agent.calls == [("fix it", {"session_id": "repo__issue-1"})]
+
+
 @pytest.mark.slow
 def test_swebench_single_end_to_end(github_test_data, tmp_path, container_executable):
     """Test the swebench_single script using the _test subset with deterministic model.

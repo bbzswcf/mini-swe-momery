@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -8,9 +9,22 @@ from pydantic import BaseModel
 from minisweagent import package_dir
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
+    _DEFAULT_PROXY_ENV_VARS,
+    _PATCH_EXCLUDE_PATHS,
+    _build_diff_command,
+    _instance_matches_any,
+    _is_valid_patch,
+    _select_patch_result,
+    chain_config,
     filter_instances,
+    flatten_chain_instances,
+    get_sb_environment,
     get_swebench_docker_image_name,
+    load_chain_nodes,
+    load_swebench_dataset,
     main,
+    order_instances_by_chains,
+    process_instance,
     remove_from_preds_file,
     update_preds_file,
 )
@@ -103,6 +117,186 @@ def test_get_image_name_with_complex_instance_id():
     assert get_swebench_docker_image_name(instance) == expected
 
 
+def test_get_image_name_swe_bench_pro_default_username():
+    """SWE-bench-Pro images use the dockerhub_tag with the default jefzda username."""
+    instance = {"instance_id": "ignored", "dockerhub_tag": "django-1.0"}
+    assert get_swebench_docker_image_name(instance) == "jefzda/sweap-images:django-1.0"
+
+
+def test_get_image_name_swe_bench_pro_env_override(monkeypatch):
+    """SWEAP_DOCKERHUB_USERNAME overrides the default user."""
+    monkeypatch.setenv("SWEAP_DOCKERHUB_USERNAME", "acme")
+    instance = {"instance_id": "ignored", "dockerhub_tag": "flask-2.1"}
+    assert get_swebench_docker_image_name(instance) == "acme/sweap-images:flask-2.1"
+
+
+def test_get_image_name_existing_image_beats_dockerhub_tag():
+    """An explicit image_name always wins over dockerhub_tag."""
+    instance = {"instance_id": "x", "dockerhub_tag": "ignored", "image_name": "custom/img:1"}
+    assert get_swebench_docker_image_name(instance) == "custom/img:1"
+
+
+@pytest.mark.parametrize(
+    ("patch_text", "expected"),
+    [
+        ("", False),
+        ("   \n", False),
+        ("diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n", True),
+        ("diff --git a/x b/x\n" + "x" * (5 * 1024 * 1024 + 10), False),
+    ],
+)
+def test_is_valid_patch_basic(patch_text, expected):
+    assert _is_valid_patch(patch_text) is expected
+
+
+def test_is_valid_patch_rejects_too_many_files():
+    pieces = ["diff --git a/f0 b/f0\n@@\n-a\n+b\n"]
+    pieces += [f"diff --git a/f{i} b/f{i}\n@@\n-a\n+b\n" for i in range(1, 600)]
+    assert _is_valid_patch("\n".join(pieces)) is False
+
+
+def test_build_diff_command_excludes_lockfiles():
+    cmd = _build_diff_command("abc123")
+    assert cmd.startswith("git diff --ignore-submodules=all abc123 -- .")
+    for path in _PATCH_EXCLUDE_PATHS:
+        assert f"':(exclude){path}'" in cmd
+
+
+def test_build_diff_command_quotes_funky_base():
+    assert "'evil ref'" in _build_diff_command("evil ref")
+
+
+def test_select_patch_result_keeps_agent_submission():
+    agent_patch = "diff --git a/src/app.py b/src/app.py\n@@\n-old\n+new\n"
+
+    assert _select_patch_result(agent_patch, lambda: "diff --git a/patch.txt b/patch.txt\n@@\n-old\n+dirty\n") == agent_patch
+
+
+def test_select_patch_result_uses_fallback_for_empty_agent_submission():
+    fallback_patch = "diff --git a/src/fallback.py b/src/fallback.py\n@@\n-old\n+new\n"
+
+    assert _select_patch_result("", lambda: fallback_patch) == fallback_patch
+
+
+def test_load_swebench_dataset_direct_json_path(tmp_path):
+    payload = [{"instance_id": "a"}, {"instance_id": "b"}]
+    path = tmp_path / "ds.json"
+    path.write_text(json.dumps(payload))
+    assert load_swebench_dataset(str(path), split="ignored") == payload
+
+
+def test_load_swebench_dataset_jsonl(tmp_path):
+    payload = [{"instance_id": "a"}, {"instance_id": "b"}]
+    path = tmp_path / "ds.jsonl"
+    path.write_text("\n".join(json.dumps(p) for p in payload))
+    assert load_swebench_dataset(str(path), split="ignored") == payload
+
+
+def test_load_swebench_dataset_env_dir(tmp_path, monkeypatch):
+    payload = [{"instance_id": "from-env"}]
+    (tmp_path / "swe_bench_pro.json").write_text(json.dumps(payload))
+    monkeypatch.setenv("SWEBENCH_DATA_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert load_swebench_dataset("swe-bench-pro", split="test") == payload
+
+
+@pytest.mark.parametrize(
+    ("instance_id", "patterns", "expected"),
+    [
+        ("django__django__1", [], False),
+        ("django__django__1", ["^django"], True),
+        ("requests__requests__1", ["^django", "^go-"], False),
+        ("acme__go-mod__1", ["^django", "go-"], True),
+        ("acme__go-mod__1", ["go-mod"], True),
+        ("acme__service__1", [".*service.*"], True),
+    ],
+)
+def test_instance_matches_any(instance_id, patterns, expected):
+    assert _instance_matches_any(instance_id, patterns) is expected
+
+
+class _DummyEnv:
+    """Stand-in env that records the kwargs it was constructed with."""
+
+    last_kwargs: dict | None = None
+
+    def __init__(self, **kwargs):
+        type(self).last_kwargs = kwargs
+
+    def execute(self, action, cwd: str = "", *, timeout: int | None = None):
+        # Pretend `git rev-parse HEAD` succeeds with a known sha.
+        return {"output": "deadbeef\n", "returncode": 0, "exception_info": ""}
+
+
+def _patch_env_factory(monkeypatch):
+    """Replace get_environment with a factory that returns ``_DummyEnv``."""
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench.get_environment", lambda cfg: _DummyEnv(**cfg))
+
+
+def test_get_sb_environment_no_proxy_by_default(monkeypatch):
+    _patch_env_factory(monkeypatch)
+    config = {"environment": {"forward_env": ["KEEP"]}, "run": {}}
+    get_sb_environment(config, {"instance_id": "django__django__1", "image_name": "x:1"})
+    assert _DummyEnv.last_kwargs["forward_env"] == ["KEEP"]
+
+
+def test_get_sb_environment_proxy_whitelist_match(monkeypatch):
+    _patch_env_factory(monkeypatch)
+    config = {
+        "environment": {"forward_env": ["KEEP"]},
+        "run": {"proxy_instances": ["^acme__go-"]},
+    }
+    get_sb_environment(config, {"instance_id": "acme__go-mod__1", "image_name": "x:1"})
+    forwarded = _DummyEnv.last_kwargs["forward_env"]
+    assert forwarded[0] == "KEEP"
+    for var in _DEFAULT_PROXY_ENV_VARS:
+        assert var in forwarded
+
+
+def test_get_sb_environment_proxy_whitelist_skip(monkeypatch):
+    _patch_env_factory(monkeypatch)
+    config = {
+        "environment": {"forward_env": ["KEEP"]},
+        "run": {"proxy_instances": ["^acme__go-"]},
+    }
+    get_sb_environment(config, {"instance_id": "django__django__1", "image_name": "x:1"})
+    assert _DummyEnv.last_kwargs["forward_env"] == ["KEEP"]
+
+
+def test_get_sb_environment_does_not_mutate_shared_config(monkeypatch):
+    """Per-instance image / forward_env writes must not leak into the shared dict."""
+    _patch_env_factory(monkeypatch)
+    config = {
+        "environment": {"forward_env": ["KEEP"]},
+        "run": {"proxy_instances": [".*"]},
+    }
+    snapshot_env = json.loads(json.dumps(config["environment"]))
+    get_sb_environment(config, {"instance_id": "x__y__1", "image_name": "img:1"})
+    assert config["environment"] == snapshot_env
+
+
+def test_get_sb_environment_custom_proxy_env_vars(monkeypatch):
+    _patch_env_factory(monkeypatch)
+    config = {
+        "environment": {"forward_env": []},
+        "run": {"proxy_instances": [".*"], "proxy_env_vars": ["MY_ONLY_VAR"]},
+    }
+    get_sb_environment(config, {"instance_id": "anything", "image_name": "x:1"})
+    assert _DummyEnv.last_kwargs["forward_env"] == ["MY_ONLY_VAR"]
+
+
+def test_load_swebench_dataset_walk_up(tmp_path, monkeypatch):
+    payload = [{"instance_id": "from-walk-up"}]
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "swe_bench_pro.json").write_text(json.dumps(payload))
+    nested = tmp_path / "deep" / "nested"
+    nested.mkdir(parents=True)
+    monkeypatch.delenv("SWEBENCH_DATA_DIR", raising=False)
+    monkeypatch.chdir(nested)
+    assert load_swebench_dataset("swe-bench-pro", split="test") == payload
+
+
 def test_filter_instances_no_filters():
     """Test filter_instances with no filtering applied"""
     instances = [{"instance_id": "repo1__test1"}, {"instance_id": "repo2__test2"}, {"instance_id": "repo3__test3"}]
@@ -184,6 +378,140 @@ def test_filter_instances_no_matches():
     instances = [{"instance_id": "django__test1"}, {"instance_id": "flask__test2"}]
     result = filter_instances(instances, filter_spec=r"nonexistent__.*", slice_spec="")
     assert result == []
+
+
+def test_load_chain_nodes_orders_steps(tmp_path):
+    path = tmp_path / "chains.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(node)
+            for node in [
+                {"chain_id": "c1", "instance_id": "b", "step_index": 2},
+                {"chain_id": "c1", "instance_id": "a", "step_index": 1},
+                {"chain_id": "c2", "instance_id": "x", "step_index": 1},
+            ]
+        )
+    )
+    chains = load_chain_nodes(path)
+    assert [node["instance_id"] for node in chains["c1"]] == ["a", "b"]
+    assert [node["instance_id"] for node in chains["c2"]] == ["x"]
+
+
+def test_order_instances_by_chains_uses_manifest_order(tmp_path):
+    path = tmp_path / "chains.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(node)
+            for node in [
+                {"chain_id": "c1", "instance_id": "b", "step_index": 2},
+                {"chain_id": "c1", "instance_id": "a", "step_index": 1},
+            ]
+        )
+    )
+    chains = order_instances_by_chains([{"instance_id": "a"}, {"instance_id": "b"}], path)
+    assert [instance["instance_id"] for instance in chains["c1"]] == ["a", "b"]
+    assert [instance["_chain_id"] for instance in chains["c1"]] == ["c1", "c1"]
+    assert [instance["_step_index"] for instance in chains["c1"]] == [1, 2]
+
+
+def test_flatten_chain_instances_preserves_chain_order():
+    chains = {"c1": [{"instance_id": "a"}], "c2": [{"instance_id": "b"}]}
+    assert [i["instance_id"] for i in flatten_chain_instances(chains)] == ["a", "b"]
+
+
+def test_chain_config_sets_per_chain_memory_home(tmp_path):
+    cfg = {"agent": {"memory": {"home": "base", "char_limit": 123}}, "model": {"model_name": "m"}}
+    result = chain_config(cfg, "chain-1", tmp_path / "memory")
+    assert result["agent"]["memory"]["home"] == str(tmp_path / "memory" / "chain-1")
+    assert result["agent"]["memory"]["char_limit"] == 123
+    assert result["agent"]["memory"]["filesystem"]["chain_id"] == "chain-1"
+    assert result["model"]["model_name"] == "m"
+
+
+def test_chain_config_resolves_relative_memory_home(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = chain_config({"agent": {"memory": {"filesystem": {"enabled": True}}}}, "chain-1", Path("memory"))
+    assert result["agent"]["memory"]["home"] == str((tmp_path / "memory" / "chain-1").resolve())
+
+
+def test_get_sb_environment_mounts_filesystem_memory_home_for_docker(monkeypatch, tmp_path):
+    _patch_env_factory(monkeypatch)
+    config = {
+        "environment": {"run_args": ["--rm", "--network", "none"]},
+        "agent": {
+            "memory": {
+                "home": str(tmp_path / "memory" / "chain-1"),
+                "filesystem": {"enabled": True},
+            }
+        },
+    }
+
+    get_sb_environment(config, {"instance_id": "repo__issue-1", "image_name": "x:1", "_chain_id": "chain-1"})
+
+    run_args = _DummyEnv.last_kwargs["run_args"]
+    assert run_args[:3] == ["--rm", "--network", "none"]
+    assert "-v" in run_args
+    assert f"{tmp_path / 'memory' / 'chain-1'}:{tmp_path / 'memory' / 'chain-1'}:rw" in run_args
+
+
+def test_process_instance_forwards_chain_metadata_to_agent_run(tmp_path, monkeypatch):
+    seen: dict = {}
+
+    class DummyModelConfig(BaseModel):
+        model_name: str = "dummy"
+
+    class DummyModel:
+        config = DummyModelConfig()
+
+        def serialize(self):
+            return {"info": {}}
+
+    class DummyEnv:
+        pass
+
+    class DummyAgent:
+        def __init__(self, model, env, **kwargs):
+            self.model = model
+            self.env = env
+
+        def run(self, task, **kwargs):
+            seen["run_kwargs"] = kwargs
+            return {
+                "exit_status": "submitted",
+                "submission": "diff --git a/x.py b/x.py\n@@\n-old\n+new\n",
+            }
+
+        def save(self, path, data):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data))
+
+    class DummyProgress:
+        def on_instance_start(self, instance_id):
+            pass
+
+        def update_instance_status(self, instance_id, status):
+            pass
+
+        def on_instance_end(self, instance_id, exit_status):
+            pass
+
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench.get_model", lambda config: DummyModel())
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench.get_sb_environment", lambda config, instance: DummyEnv())
+    monkeypatch.setattr("minisweagent.run.benchmarks.swebench.get_agent_class", lambda spec: DummyAgent)
+
+    process_instance(
+        {
+            "instance_id": "repo__issue-1",
+            "problem_statement": "Fix it",
+            "_chain_id": "chain-a",
+            "_step_index": 7,
+        },
+        tmp_path,
+        {"agent": {"agent_class": "dummy"}, "model": {}},
+        DummyProgress(),
+    )
+
+    assert seen["run_kwargs"] == {"session_id": "repo__issue-1", "chain_id": "chain-a", "step_index": 7}
 
 
 def test_update_preds_file_new_file(tmp_path):

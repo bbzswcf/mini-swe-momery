@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Memory 文件记忆系统解析</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f5;
+      --panel: #ffffff;
+      --ink: #1f2328;
+      --muted: #5f6673;
+      --line: #d9dde3;
+      --accent: #1f7a8c;
+      --accent-2: #7a4f16;
+      --good: #146c43;
+      --warn: #9a5b13;
+      --code: #f0f2f4;
+      --shadow: 0 1px 2px rgba(31, 35, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      padding: 16px 0 28px;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      font-size: 34px;
+      line-height: 1.18;
+      margin: 0 0 12px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 24px;
+      line-height: 1.3;
+      margin: 34px 0 14px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin: 22px 0 10px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }
+
+    code {
+      background: var(--code);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      background: #1f2328;
+      color: #f6f8fa;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 17px;
+      max-width: 920px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+      margin: 18px 0;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fafafa;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      margin: 0 6px 8px 0;
+    }
+
+    .answer {
+      border-left: 4px solid var(--accent);
+      background: #eef7f8;
+    }
+
+    .warning {
+      border-left: 4px solid var(--warn);
+      background: #fff7ed;
+    }
+
+    .ok {
+      border-left: 4px solid var(--good);
+      background: #eef8f1;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin: 18px 0;
+    }
+
+    .step {
+      position: relative;
+      min-height: 124px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -11px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 18px;
+      text-align: center;
+      z-index: 1;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .tree {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .tree ul {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    .tree li {
+      margin: 5px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      margin: 16px 0;
+    }
+
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 12px;
+    }
+
+    th {
+      background: #f1f3f5;
+      font-size: 13px;
+      color: #404853;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .source-list {
+      columns: 2;
+      column-gap: 28px;
+    }
+
+    .source-list li {
+      break-inside: avoid;
+      margin-bottom: 8px;
+    }
+
+    @media (max-width: 860px) {
+      main {
+        padding: 22px 16px 40px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .grid,
+      .flow {
+        display: block;
+      }
+
+      .card,
+      .step {
+        margin-bottom: 12px;
+      }
+
+      .step:not(:last-child)::after {
+        display: none;
+      }
+
+      .source-list {
+        columns: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Codex Memory 文件记忆系统解析</h1>
+      <p class="lede">
+        结论先说清楚：Codex 的 memory 确实是一个文件化记忆系统，但运行时模型通常读到的不是历史 rollout 全貌，
+        而是后台从历史 rollout 抽取、筛选、合并后的多层文件记忆。完整 rollout 是写入管线的原始证据，不是每次任务默认加载给模型的上下文。
+      </p>
+    </header>
+
+    <section class="card answer">
+      <h2>一句话模型</h2>
+      <p>
+        Codex 把历史对话/工具调用的 <code>rollout</code> 先抽成结构化 <code>raw_memory</code>，
+        再由一个内部 consolidation agent 合并成 <code>~/.codex/memories/</code> 下的文件：
+        <code>memory_summary.md</code>、<code>MEMORY.md</code>、<code>rollout_summaries/</code>，
+        以及可选的 <code>skills/</code>。新任务开始时，模型只被提示“有这些记忆文件可查”，并直接收到一个很短的
+        <code>memory_summary.md</code> 摘要。
+      </p>
+    </section>
+
+    <section>
+      <h2>模型能看到什么，不能看到什么</h2>
+      <div class="grid">
+        <div class="card span-6 ok">
+          <h3>运行时默认可见</h3>
+          <p>
+            当 memory feature 和 <code>use_memories</code> 都开启，并且
+            <code>~/.codex/memories/memory_summary.md</code> 存在且非空时，Codex 会把一段
+            “Memory” developer policy 注入 prompt。这段 policy 包含：
+          </p>
+          <ul>
+            <li><code>memory_summary.md</code> 的截断内容，约 2500 token 上限；</li>
+            <li>memory 文件夹布局说明；</li>
+            <li>什么时候应该查 memory 的决策边界；</li>
+            <li>引用 memory 的隐藏 citation 格式要求。</li>
+          </ul>
+        </div>
+        <div class="card span-6 warning">
+          <h3>运行时默认不可见</h3>
+          <p>
+            过去完整 rollout 不会直接塞进新任务上下文。模型也不会自动看到所有
+            <code>rollout_summaries/*.md</code>、完整 <code>MEMORY.md</code> 或
+            原始 <code>.jsonl</code> 历史。它需要按 prompt 指引主动搜索/读取相关记忆文件。
+          </p>
+          <p>
+            换句话说，Codex 的 memory 是 retrieval-oriented 的，而不是“把历史聊天全量续上下文”。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>文件夹结构</h2>
+      <div class="tree">
+        <ul>
+          <li><code>~/.codex/memories/</code>：memory 根目录，也是 Phase 2 consolidation agent 的工作区。</li>
+          <li><code>memory_summary.md</code>：最小 prompt-loaded 层，必须以 <code>v1</code> 开头，目标是短、密、高路由价值。</li>
+          <li><code>MEMORY.md</code>：主 handbook，按 task group 聚合，便于 grep 和人工/模型扫描。</li>
+          <li><code>raw_memories.md</code>：Phase 2 输入层，由 SQLite 中选中的 stage1 outputs 机械合并而来。</li>
+          <li><code>rollout_summaries/</code>：每个被选中 rollout 的摘要文件，保存比 <code>MEMORY.md</code> 更接近证据的细节。</li>
+          <li><code>skills/&lt;skill-name&gt;/</code>：可选的可复用流程文件，entrypoint 是 <code>SKILL.md</code>。</li>
+          <li><code>extensions/</code>：显式用户更新或外部 memory extension 的输入区。</li>
+          <li><code>.git/</code>：Codex 在 memory root 下维护 git baseline，用 diff 判断 Phase 2 是否有实际变化。</li>
+        </ul>
+      </div>
+
+      <h3>层次关系</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>层</th>
+            <th>作用</th>
+            <th>运行时是否直接进 prompt</th>
+            <th>信息密度</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>memory_summary.md</code></td>
+            <td>全局短摘要 + 路由索引 + 用户偏好/通用提示。</td>
+            <td>是，会被注入 developer policy。</td>
+            <td>最高压缩。</td>
+          </tr>
+          <tr>
+            <td><code>MEMORY.md</code></td>
+            <td>主记忆手册，按任务族保存可复用经验、失败规避、命令和路径。</td>
+            <td>否，prompt 告诉模型需要时搜索/读取。</td>
+            <td>中等压缩。</td>
+          </tr>
+          <tr>
+            <td><code>rollout_summaries/</code></td>
+            <td>单个 rollout 的摘要和证据片段，用于需要更精确上下文时下钻。</td>
+            <td>否，只有被 <code>MEMORY.md</code> 指向时才建议打开。</td>
+            <td>较少压缩。</td>
+          </tr>
+          <tr>
+            <td>原始 rollout</td>
+            <td>历史对话、工具调用、工具输出的原始记录。</td>
+            <td>否；Phase 2 prompt 明确要求不要打开 raw sessions。</td>
+            <td>原始证据。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>写入机制：从 rollout 到文件记忆</h2>
+      <p>
+        Codex 的写入不是“模型在完成任务时自己写 MEMORY.md”。它是后台 pipeline，在 root session 有输入后异步启动。
+        入口会跳过 ephemeral session、feature 未开启、sub-agent session、state DB 不可用等场景。
+      </p>
+
+      <div class="flow">
+        <div class="step">
+          <strong>1. 历史 rollout 进入 state DB</strong>
+          <span>交互线程有 rollout path、cwd、updated_at、source、memory_mode 等元数据。</span>
+        </div>
+        <div class="step">
+          <strong>2. Phase 1 claim</strong>
+          <span>后台扫描最近、空闲足够久、memory_mode=enabled、尚未抽取或已过期的线程。</span>
+        </div>
+        <div class="step">
+          <strong>3. Phase 1 extraction</strong>
+          <span>模型读取过滤后的 rollout items，输出 JSON：raw_memory、rollout_summary、rollout_slug。</span>
+        </div>
+        <div class="step">
+          <strong>4. Phase 2 selection</strong>
+          <span>按 usage_count、last_usage、source_updated_at 等选择要参与全局合并的 raw memories。</span>
+        </div>
+        <div class="step">
+          <strong>5. Consolidation agent</strong>
+          <span>内部 agent 在 memory root 内更新 MEMORY.md、memory_summary.md、skills/。</span>
+        </div>
+      </div>
+
+      <h3>Phase 1：单 rollout 抽取</h3>
+      <p>
+        Phase 1 从 state DB claim 一批合格历史线程，读取 rollout 文件，只保留 memory-relevant 的 response items。
+        它会过滤掉 developer messages，并剔除 <code>AGENTS.md</code> 注入块和 skill 注入块，避免把系统/项目指令错误记成用户经验。
+      </p>
+      <pre><code>stage1 output schema:
+{
+  "raw_memory": "... detailed markdown raw memory ...",
+  "rollout_summary": "... compact routing summary ...",
+  "rollout_slug": "... optional stable-ish filename slug ..."
+}</code></pre>
+      <p>
+        Phase 1 的输出写入 SQLite <code>stage1_outputs</code>，不是直接写文件。这里的
+        <code>raw_memory</code> 是“从完整历史中抽出来的结构化记忆原料”，它比完整 rollout 小得多，也更适合后续合并。
+      </p>
+
+      <h3>Phase 2：全局文件合并</h3>
+      <p>
+        Phase 2 先拿全局 lock，然后把当前选中的 stage1 outputs 同步成文件输入：
+        <code>raw_memories.md</code> 和 <code>rollout_summaries/*.md</code>。
+        Memory root 是一个 git baseline 目录，Codex 会生成 <code>phase2_workspace_diff.md</code>，
+        再启动一个内部 consolidation agent 读取 diff 和输入文件，修改最终记忆文件。
+      </p>
+      <p>
+        这个内部 agent 被严格限制：cwd 是 memory root，ephemeral，memory feature 关闭，不允许递归生成 memory；
+        无网络，approval policy 是 never，只有 memory root 写权限。
+      </p>
+    </section>
+
+    <section>
+      <h2>读机制：新任务如何使用 memory</h2>
+      <p>
+        读路径由 extension 贡献 developer policy。它读取 <code>memory_summary.md</code>，渲染
+        <code>read_path.md</code> 模板，并把结果作为 developer policy 注入。这个模板告诉模型：
+      </p>
+      <ul>
+        <li>先看已注入的 summary，提取关键词；</li>
+        <li>用关键词查 <code>MEMORY.md</code>；</li>
+        <li>只有 <code>MEMORY.md</code> 明确指向时，再打开 1-2 个最相关的 rollout summary 或 skill；</li>
+        <li>保持 quick pass，通常 4-6 步内停止；</li>
+        <li>如果用到了 memory，最终回复尾部追加隐藏 <code>&lt;oai-mem-citation&gt;</code>。</li>
+      </ul>
+
+      <div class="card warning">
+        <h3>当前工具状态</h3>
+        <p>
+          Codex 仓库里有两套 read-only memory 工具实现：一个 extension tool 版本，一个 MCP server 版本，
+          都提供 <code>list</code>、<code>read</code>、<code>search</code>。
+          但 app-server 当前安装 extension 时只启用了 prompt contributor，tool contributor 被注释掉。
+          所以当前主路径更像“把 memory 文件夹和检索规则告诉模型”，而不是强制走专门 memory tool。
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>SQLite 与 usage 反馈</h2>
+      <p>
+        文件不是唯一状态。Codex 用 SQLite 管后台 pipeline 的可靠性和 selection：
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>状态</th>
+            <th>用途</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>stage1_outputs</code></td>
+            <td>每个 thread 的 <code>raw_memory</code>、<code>rollout_summary</code>、<code>rollout_slug</code>、生成时间、usage 统计、Phase 2 选择标记。</td>
+          </tr>
+          <tr>
+            <td><code>jobs</code></td>
+            <td>Phase 1 和 Phase 2 的 job lease、retry backoff、watermark、ownership token。</td>
+          </tr>
+          <tr>
+            <td><code>threads.memory_mode</code></td>
+            <td><code>enabled</code>、<code>disabled</code>、<code>polluted</code> 等模式，控制某条历史是否可被抽成 memory。</td>
+          </tr>
+          <tr>
+            <td><code>usage_count</code> / <code>last_usage</code></td>
+            <td>当模型在最终回答中引用 memory citation，Codex 会更新相应 stage1 output 的使用统计，后续 Phase 2 selection 会优先保留被用到的记忆。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>安全与遗忘机制</h2>
+      <div class="grid">
+        <div class="card span-4">
+          <h3>避免污染</h3>
+          <p>
+            如果配置 <code>disable_on_external_context</code> 开启，使用 web search / external context 的线程会被标记为
+            <code>polluted</code>，不再作为 memory 输入。
+          </p>
+        </div>
+        <div class="card span-4">
+          <h3>避免 prompt injection</h3>
+          <p>
+            Phase 1 明确把 rollout 内容视为数据而不是指令，并过滤 developer/AGENTS/skill 注入片段。
+          </p>
+        </div>
+        <div class="card span-4">
+          <h3>遗忘靠 selection + diff</h3>
+          <p>
+            Phase 2 当前选中集合会直接同步到文件夹；不再选中的 rollout summary 会删除。Consolidation agent 通过 git diff 做对应清理。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>和 AGENTS.md 的关系</h2>
+      <p>
+        <code>AGENTS.md</code> 是项目/目录指令，不是 Codex memory pipeline 的输出。Codex 会从项目根到当前目录收集
+        <code>AGENTS.md</code> 或 <code>AGENTS.override.md</code>，作为 user instructions 注入。
+        Phase 1 反而会过滤这类注入块，避免把“本次项目指令”误当成历史经验。
+      </p>
+    </section>
+
+    <section>
+      <h2>对 mini-memory 的参考价值</h2>
+      <div class="card answer">
+        <p>
+          对 SWE-bench 类任务，Codex 的核心思想很有价值：把历史 trial 全貌留作证据，但运行时只暴露逐层压缩后的文件记忆。
+          不过 Codex 的默认 prompt 强调 user profile、communication preferences、skills，这和 mini-memory 的非目标不同。
+        </p>
+        <p>
+          更适合 mini-memory 的改造是：
+        </p>
+        <ul>
+          <li><code>memory_summary.md</code>：repo / package / issue-family 的短路由索引；</li>
+          <li><code>MEMORY.md</code>：patch patterns、失败规避、测试命令、环境坑、可复用定位路径；</li>
+          <li><code>rollout_summaries/</code>：保存 trial 级证据和验证结果；</li>
+          <li>去掉 user profile 和面向通用个人助手的偏好记忆；</li>
+          <li>保留 Phase 1/Phase 2 解耦和 citation/usage 反哺 selection。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <h2>源码锚点</h2>
+      <ul class="source-list">
+        <li><code>codex-rs/memories/README.md</code>：官方 memory pipeline 概览。</li>
+        <li><code>codex-rs/memories/read/src/prompts.rs</code>：读取 <code>memory_summary.md</code> 并构造 developer instructions。</li>
+        <li><code>codex-rs/memories/read/templates/memories/read_path.md</code>：运行时模型看到的 memory 使用规则。</li>
+        <li><code>codex-rs/memories/write/src/start.rs</code>：后台 memory startup task 入口。</li>
+        <li><code>codex-rs/memories/write/src/phase1.rs</code>：从 rollout 抽取 <code>raw_memory</code>。</li>
+        <li><code>codex-rs/memories/write/src/phase2.rs</code>：文件同步、diff、consolidation agent。</li>
+        <li><code>codex-rs/memories/write/templates/memories/consolidation.md</code>：<code>MEMORY.md</code>、<code>memory_summary.md</code>、<code>skills/</code> 的格式要求。</li>
+        <li><code>codex-rs/state/src/runtime/memories.rs</code>：SQLite job claim、selection、usage、pollution。</li>
+        <li><code>codex-rs/ext/memories/src/extension.rs</code>：memory prompt/tool extension 注册点。</li>
+        <li><code>codex-rs/memories/mcp/src/server.rs</code>：read-only memory MCP server。</li>
+        <li><code>codex-rs/core/src/agents_md.rs</code>：<code>AGENTS.md</code> discovery 和注入。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

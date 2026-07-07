@@ -3,15 +3,14 @@
 from pathlib import Path
 
 import typer
-from datasets import load_dataset
 
 from minisweagent import global_config_dir
 from minisweagent.agents import get_agent
 from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.swebench import (
-    DATASET_MAPPING,
     get_sb_environment,
+    load_swebench_dataset,
 )
 from minisweagent.utils.log import logger
 from minisweagent.utils.serialize import UNSET, recursive_merge
@@ -56,15 +55,10 @@ def main(
 ) -> None:
     # fmt: on
     """Run on a single SWE-Bench instance."""
-    dataset_path = DATASET_MAPPING.get(subset, subset)
-    logger.info(f"Loading dataset from {dataset_path}, split {split}...")
-    instances = {
-        inst["instance_id"]: inst  # type: ignore
-        for inst in load_dataset(dataset_path, split=split)
-    }
+    instances = {inst["instance_id"]: inst for inst in load_swebench_dataset(subset, split)}
     if instance_spec.isnumeric():
         instance_spec = sorted(instances.keys())[int(instance_spec)]
-    instance: dict = instances[instance_spec]  # type: ignore
+    instance: dict = instances[instance_spec]
 
     logger.info(f"Building agent config from specs: {config_spec}")
     configs = [get_config_from_spec(spec) for spec in config_spec]
@@ -93,7 +87,12 @@ def main(
         config.get("agent", {}),
         default_type="interactive",
     )
-    agent.run(instance["problem_statement"])
+    task = instance["problem_statement"]
+    if requirements := instance.get("requirements"):
+        task += "\n\n<requirements>\n" + requirements + "\n</requirements>"
+    if interface := instance.get("interface"):
+        task += "\n\n<interface>\n" + interface + "\n</interface>"
+    agent.run(task, session_id=instance["instance_id"])
 
 
 if __name__ == "__main__":

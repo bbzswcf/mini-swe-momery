@@ -4,6 +4,7 @@
 # Read this first: https://mini-swe-agent.com/latest/usage/mini/  (usage)
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,12 @@ Examples:
 
 console = Console(highlight=False)
 app = typer.Typer(rich_markup_mode="rich")
+
+
+def _mini_session_id(output_path: Path | str | None) -> str:
+    stem = Path(output_path).stem if output_path else "run"
+    safe_stem = "".join(c if c.isalnum() or c in "._-" else "-" for c in stem) or "run"
+    return f"mini-{safe_stem}-{time.time_ns()}"
 
 
 # fmt: off
@@ -99,8 +106,9 @@ def main(
     model = get_model(config=config.get("model", {}))
     env = get_environment(config.get("environment", {}), default_type="local")
     agent = get_agent(model, env, config.get("agent", {}), default_type="interactive")
-    agent.run(run_task)
-    if (output_path := config.get("agent", {}).get("output_path")):
+    output_path = config.get("agent", {}).get("output_path")
+    agent.run(run_task, session_id=_mini_session_id(output_path))
+    if output_path:
         console.print(f"Saved trajectory to [bold green]'{output_path}'[/bold green]")
     return agent
 

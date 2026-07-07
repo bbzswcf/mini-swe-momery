@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Iterable
 
 from jinja2 import StrictUndefined, Template
 
@@ -25,6 +26,14 @@ BASH_TOOL_RESPONSE_API = {
 }
 
 
+def to_response_api_tool(tool: dict) -> dict:
+    """Flatten a chat-completion-wrapped schema (``{type, function: {...}}``) to the
+    flat Response-API shape (``{type, name, description, parameters}``)."""
+    if tool.get("type") == "function" and "function" in tool:
+        return {"type": "function", **tool["function"]}
+    return tool
+
+
 def _format_error_message(error_text: str) -> dict:
     """Create a FormatError message in Responses API format."""
     return {
@@ -35,12 +44,22 @@ def _format_error_message(error_text: str) -> dict:
     }
 
 
-def parse_toolcall_actions_response(output: list, *, format_error_template: str) -> list[dict]:
+def _raise_format_error(format_error_template: str, error: str) -> None:
+    error_text = Template(format_error_template, undefined=StrictUndefined).render(error=error, actions=[])
+    raise FormatError(_format_error_message(error_text))
+
+
+def parse_toolcall_actions_response(
+    output: list,
+    *,
+    format_error_template: str,
+    allowed_tools: Iterable[str] | None = None,
+) -> list[dict]:
     """Parse tool calls from a Responses API response output.
 
-    Filters for function_call items and parses them.
-    Response API format has name/arguments at top level with call_id:
-    {"type": "function_call", "call_id": "...", "name": "bash", "arguments": "..."}
+    Mirrors :func:`parse_toolcall_actions` semantics — emits ``tool_name`` /
+    ``args`` on every action and additionally ``command`` for ``bash``. Provider
+    tools must appear in ``allowed_tools`` (default ``{"bash"}``).
     """
     tool_calls = []
     for item in output:
@@ -50,29 +69,32 @@ def parse_toolcall_actions_response(output: list, *, format_error_template: str)
                 item.model_dump() if hasattr(item, "model_dump") else dict(item) if not isinstance(item, dict) else item
             )
     if not tool_calls:
-        error_text = Template(format_error_template, undefined=StrictUndefined).render(
-            error="No tool calls found in the response. Every response MUST include at least one tool call.",
-            actions=[],
+        _raise_format_error(
+            format_error_template,
+            "No tool calls found in the response. Every response MUST include at least one tool call.",
         )
-        raise FormatError(_format_error_message(error_text))
+    allowed = set(allowed_tools) if allowed_tools is not None else {"bash"}
     actions = []
     for tool_call in tool_calls:
-        error_msg = ""
-        args = {}
+        name = tool_call.get("name")
         try:
             args = json.loads(tool_call.get("arguments", "{}"))
         except Exception as e:
-            error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.get("name") != "bash":
-            error_msg += f"Unknown tool '{tool_call.get('name')}'."
-        if not isinstance(args, dict) or "command" not in args:
-            error_msg += "Missing 'command' argument in bash tool call."
-        if error_msg:
-            error_text = Template(format_error_template, undefined=StrictUndefined).render(
-                error=error_msg.strip(), actions=[]
-            )
-            raise FormatError(_format_error_message(error_text))
-        actions.append({"command": args["command"], "tool_call_id": tool_call.get("call_id") or tool_call.get("id")})
+            _raise_format_error(format_error_template, f"Error parsing tool call arguments: {e}.")
+        if name not in allowed:
+            _raise_format_error(format_error_template, f"Unknown tool '{name}'.")
+        if not isinstance(args, dict):
+            _raise_format_error(format_error_template, f"Tool '{name}' arguments must be a JSON object.")
+        if name == "bash" and "command" not in args:
+            _raise_format_error(format_error_template, "Missing 'command' argument in bash tool call.")
+        action = {
+            "tool_name": name,
+            "args": args,
+            "tool_call_id": tool_call.get("call_id") or tool_call.get("id"),
+        }
+        if name == "bash":
+            action["command"] = args["command"]
+        actions.append(action)
     return actions
 
 

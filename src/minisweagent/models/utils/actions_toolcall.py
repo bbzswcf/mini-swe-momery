@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Iterable
 
 from jinja2 import StrictUndefined, Template
 
@@ -27,42 +28,57 @@ BASH_TOOL = {
 }
 
 
-def parse_toolcall_actions(tool_calls: list, *, format_error_template: str) -> list[dict]:
-    """Parse tool calls from the response. Raises FormatError if unknown tool or invalid args."""
+def _format_error(format_error_template: str, error: str) -> FormatError:
+    return FormatError(
+        {
+            "role": "user",
+            "content": Template(format_error_template, undefined=StrictUndefined).render(
+                error=error, actions=[]
+            ),
+            "extra": {"interrupt_type": "FormatError"},
+        }
+    )
+
+
+def parse_toolcall_actions(
+    tool_calls: list,
+    *,
+    format_error_template: str,
+    allowed_tools: Iterable[str] | None = None,
+) -> list[dict]:
+    """Parse tool calls from the response. Raises FormatError on unknown tool / bad args.
+
+    Each returned action carries ``tool_name`` and parsed ``args`` so callers (e.g.
+    ``MemoryAgent``) can route by tool name. ``bash`` actions additionally expose
+    ``command`` for backward compatibility with ``env.execute(action)``.
+
+    ``allowed_tools`` defaults to ``{"bash"}`` so legacy callers see no behavior
+    change. Pass an extended set (``{"bash", "memory", "mem0_search", ...}``) to
+    let the model emit memory-side tool calls without tripping FormatError.
+    """
     if not tool_calls:
-        raise FormatError(
-            {
-                "role": "user",
-                "content": Template(format_error_template, undefined=StrictUndefined).render(
-                    error="No tool calls found in the response. Every response MUST include at least one tool call.",
-                    actions=[],
-                ),
-                "extra": {"interrupt_type": "FormatError"},
-            }
+        raise _format_error(
+            format_error_template,
+            "No tool calls found in the response. Every response MUST include at least one tool call.",
         )
+    allowed = set(allowed_tools) if allowed_tools is not None else {"bash"}
     actions = []
     for tool_call in tool_calls:
-        error_msg = ""
-        args = {}
+        name = tool_call.function.name
         try:
             args = json.loads(tool_call.function.arguments)
         except Exception as e:
-            error_msg = f"Error parsing tool call arguments: {e}."
-        if tool_call.function.name != "bash":
-            error_msg += f"Unknown tool '{tool_call.function.name}'."
-        if not isinstance(args, dict) or "command" not in args:
-            error_msg += "Missing 'command' argument in bash tool call."
-        if error_msg:
-            raise FormatError(
-                {
-                    "role": "user",
-                    "content": Template(format_error_template, undefined=StrictUndefined).render(
-                        actions=[], error=error_msg.strip()
-                    ),
-                    "extra": {"interrupt_type": "FormatError"},
-                }
-            )
-        actions.append({"command": args["command"], "tool_call_id": tool_call.id})
+            raise _format_error(format_error_template, f"Error parsing tool call arguments: {e}.") from e
+        if name not in allowed:
+            raise _format_error(format_error_template, f"Unknown tool '{name}'.")
+        if not isinstance(args, dict):
+            raise _format_error(format_error_template, f"Tool '{name}' arguments must be a JSON object.")
+        if name == "bash" and "command" not in args:
+            raise _format_error(format_error_template, "Missing 'command' argument in bash tool call.")
+        action = {"tool_name": name, "args": args, "tool_call_id": tool_call.id}
+        if name == "bash":
+            action["command"] = args["command"]
+        actions.append(action)
     return actions
 
 

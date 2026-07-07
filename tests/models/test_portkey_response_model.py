@@ -34,7 +34,9 @@ def test_response_api_model_basic_query():
         messages = [{"role": "user", "content": "test"}]
         result = model.query(messages)
 
-        assert result["extra"]["actions"] == [{"command": "echo test", "tool_call_id": "call_abc"}]
+        actions = result["extra"]["actions"]
+        assert len(actions) == 1 and actions[0]["command"] == "echo test"
+        assert actions[0]["tool_call_id"] == "call_abc" and actions[0]["tool_name"] == "bash"
         mock_client.responses.create.assert_called_once_with(
             model="gpt-5-mini", input=messages, tools=[BASH_TOOL_RESPONSE_API]
         )
@@ -79,7 +81,9 @@ def test_response_api_model_stateless_flattens_response():
         ]
         result = model.query(messages)
 
-        assert result["extra"]["actions"] == [{"command": "echo second", "tool_call_id": "call_2"}]
+        actions = result["extra"]["actions"]
+        assert len(actions) == 1 and actions[0]["command"] == "echo second"
+        assert actions[0]["tool_call_id"] == "call_2"
         # Verify that response objects are flattened and extra is stripped
         expected_input = [
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "first"}]},
@@ -117,10 +121,9 @@ def test_response_api_model_multiple_tool_calls():
         messages = [{"role": "user", "content": "test"}]
         result = model.query(messages)
 
-        assert result["extra"]["actions"] == [
-            {"command": "echo first", "tool_call_id": "call_1"},
-            {"command": "echo second", "tool_call_id": "call_2"},
-        ]
+        actions = result["extra"]["actions"]
+        assert [a["command"] for a in actions] == ["echo first", "echo second"]
+        assert [a["tool_call_id"] for a in actions] == ["call_1", "call_2"]
 
 
 def test_response_api_model_cost_tracking():
@@ -246,7 +249,9 @@ def test_response_api_model_retry_on_rate_limit():
         messages = [{"role": "user", "content": "test"}]
         result = model.query(messages)
 
-        assert result["extra"]["actions"] == [{"command": "echo Success after retry", "tool_call_id": "call_retry"}]
+        actions = result["extra"]["actions"]
+        assert len(actions) == 1 and actions[0]["command"] == "echo Success after retry"
+        assert actions[0]["tool_call_id"] == "call_retry"
         assert call_count == 2
 
 

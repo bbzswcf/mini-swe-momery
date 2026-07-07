@@ -51,6 +51,20 @@ def test_docker_environment_config_defaults(executable):
     assert config.forward_env == []
     assert config.timeout == 30
     assert config.executable == executable
+    assert config.api_timeout is None
+    assert config.pull_timeout == 120
+    assert config.mem_limit is None
+    assert config.container_entrypoint is None
+
+
+def test_docker_environment_api_timeout_overrides_pull_timeout():
+    cfg = DockerEnvironmentConfig(image="x", pull_timeout=120, api_timeout=900)
+    assert (cfg.api_timeout or cfg.pull_timeout) == 900
+
+
+def test_docker_environment_api_timeout_falls_back_to_pull_timeout():
+    cfg = DockerEnvironmentConfig(image="x", pull_timeout=300)
+    assert (cfg.api_timeout or cfg.pull_timeout) == 300
 
 
 @pytest.mark.slow

@@ -2,54 +2,88 @@
 
 ## 项目目标
 
-构建一套**面向代码任务（SWE-bench 类）**的轻量记忆系统（mini-memory）：让 agent 在解决 GitHub issue / repo-level 编码任务时，能跨 trial、跨 instance 复用之前学到的工程经验、踩过的坑、可行的改动模式。
+构建面向代码任务（SWE-bench 类）的轻量记忆系统（mini-memory）：让 agent 解决 GitHub issue / repo-level 编码任务时，能跨 trial、跨 instance 复用学到的工程经验、踩过的坑、可行的改动模式。
 
-明确的非目标（决定了我们不迁移哪些东西）：
+非目标（决定了不迁移哪些东西）：
 
-- **不做用户画像** —— 没有"用户偏好/沟通风格"这种概念，整个系统只服务一个自动化 agent，因此不迁移 hermes 的 `USER.md`。
-- **不做 messaging / multi-user / 权限** —— 不接 gateway、Telegram、Discord 这些。
-- **不做 Skills（流程性知识）** —— 我们只做记忆（事实/经验性知识）。Skills 体系在 hermes 中是独立子系统，本项目完全不迁移。
-- **不做多 profile / peer 建模** —— 单 agent 单实例足够。
+- **不做用户画像**：只服务一个自动化 agent，不迁移 hermes 的 `USER.md`。
+- **不做 messaging / multi-user / 权限**：不接 gateway、Telegram、Discord。
+- **不做 Skills（流程性知识）**：只做记忆（事实/经验性知识），不迁移 hermes 的 Skills 子系统。
+- **不做多 profile / peer 建模**：单 agent 单实例足够。
+
+## 实验口径
+
+- memory 实验一律用链式子集 `data/swe_bench_pro_chain_experiment_nodes.jsonl`：链内按 `step_index` 顺序跑，链间独立、可按链并行。**不要**用全量 `data/swe_bench_pro.json`（731 条）做 memory 实验，它只作原始数据源。
+- 调度：`mini-extra swebench --chain-nodes data/swe_bench_pro_chain_experiment_nodes.jsonl --chain-workers <链数>`；每条链自动用独立 `memory.home`。
+- 默认基线测最小组合：`litellm_response` + `MemoryAgent` + 内置 `MEMORY.md` + 本地 SQLite FTS session recall，保持 `sessions_enabled: true`、`consolidation.on_session_end: false`。consolidation / Hindsight / Mem0 作为后续单独消融变量加入。
+- 另有独立对照基线 **chain-window**（见下节）。
+
+### 新实验启动前：核对 prompt 与工具
+
+消融 overlay（如 `swebench_pro_hindsight_only.yaml`）叠在 `swebench_pro.yaml` 上，**只改 `agent.memory` 开关不够**：若不覆盖 `system_template` / `instance_template` / `model.format_error_template`，模型仍按基座 prompt 里的 `memory` / `MEMORY.md` / `session_search` 行事，与实际暴露的工具不一致，实验作废。
+
+每次新开跑或改 overlay 后，先用一条 traj 做 spot check：
+
+1. **开关**（`agent.memory`）：`builtin_enabled` / `sessions_enabled` / `consolidation` / `provider` 与设计一致。
+2. **合并后 prompt**（overlay + `swebench_pro.yaml`）：`system_template`（含 `{{ memory_block }}` 注入内容）、`instance_template`（工具名、CRITICAL 里「至少一个 tool call」列举）、`model.format_error_template`（重试提示里的工具列表）只描述本实验**实际启用**的能力。对照 `swebench_pro_nomemory.yaml`、`swebench_pro_hindsight_only.yaml`。
+3. **实际注册的工具**（`MemoryManager.get_tool_schemas()` / `tool_names`）与 prompt 一一对应。例如纯 Hindsight 应为 `hindsight_retain` / `hindsight_recall` / `hindsight_reflect`，无 `memory`、无 `session_search`。
+4. **Provider 工具 schema 文案**：`mirror_builtin_writes: false` 或 `builtin_enabled: false` 时，description 不得再提内置 `memory` 工具。
+5. **Trajectory 抽检**：system 与首条 user 无已禁用组件的残留说明；`extra.actions` 里的 tool 名都属于第 3 步集合。
+
+自检脚本（仓库根目录，替换 overlay 文件名）：
+
+```bash
+uv run python -c "
+from minisweagent.config import get_config_from_spec
+from minisweagent.memory import MemoryManager
+from minisweagent.utils.serialize import recursive_merge
+cfg = recursive_merge(
+    get_config_from_spec('swebench_pro.yaml'),
+    get_config_from_spec('swebench_pro_hindsight_only.yaml'),
+)
+m = cfg['agent']['memory']
+print('tool_names:', MemoryManager.from_config(m).tool_names)
+for k in ('system_template', 'instance_template', 'format_error_template'):
+    text = cfg['agent'].get(k) or cfg.get('model', {}).get(k, '')
+    print(f'--- {k} ---'); print(text[:600])
+"
+```
+
+或直接读 `results/.../instance_*/*.traj.json` 的 `messages[0]`（system）与首条 user，对照 `extra.actions` 的 tool 名。
+
+## Chain-window baseline（独立对照）
+
+整条链共享一个 LLM context，不走 memory tool / `MEMORY.md`，靠阈值触发的对话压缩跨题复用上下文。走独立 agent + runner，与其他 memory 实验互不影响、可并行。
+
+- 入口：`mini-extra swebench-chain-window -c src/minisweagent/config/benchmarks/swebench_pro_chain_window.yaml --chain-nodes data/swe_bench_pro_chain_experiment_nodes.jsonl --chain-workers <链数>`
+- Agent：`ChainWindowAgent`（`src/minisweagent/agents/chain_window.py`，`DefaultAgent` 子类）——整条链共用 `self.messages`，首题装系统 prompt + 题目、后续题只追加 user message；`step_limit` / `cost_limit` 按每题计，`n_calls` / `cost` 累计全链。`input_tokens` 超过 `model_window * threshold` 时把"已完成的题"压成一条 `<compressed_history>`（正在做的题不动，旧 summary 被新的替换、不叠加），压缩走 `model.query_no_tools`（同主模型、无 tools、自带 retry）。具体阈值/字段见配置与 agent docstring。
+- 配置 `swebench_pro_chain_window.yaml`：`compression.model_window`（默认 272000）/ `threshold`（0.8）/ 输出预算（`max_output_tokens`、`char_budget`）/ `trace_max_chars`；prompt 与 `swebench_pro_nomemory.yaml` 对齐，保证 baseline 干净。
+- 断点恢复（复用同一 `-o` 目录）：跑完的链跳过；跑一半的链无法半恢复（题 N 依赖前面累计/压缩出的上下文），故整条清掉 preds + 各题 traj 重跑，日志开头打印 resume 统计。
 
 ## 目录约定
 
-- `src/minisweagent/`：本项目的源码目录，所有新增代码写在这里。
-- `memory_repo/hermes-agent/`：**只读参考仓库**。它是外部项目 hermes-agent 的源码，唯一作用是供我们参考其记忆系统的设计与实现。
-  - 不要修改其中任何文件。
-  - 不要将其作为依赖 import，也不要把其代码直接拷贝到 `src/` 中。
-  - 仅用于阅读、对照实现思路。
-- `notes/hermes-memory-digest.md`：从下列源文档提炼出的精读笔记，已按本项目目标筛过；优先看这份。
+- `src/minisweagent/`：本项目源码，新增代码都写这里。
+- `memory_repo/`：**只读参考仓库**目录。每个子目录是一个外部项目的完整 clone（保留各自 `.git`，非 submodule，未纳入本仓库 git 跟踪），仅供阅读对照，不要修改、不要 import、不要拷进 `src/`。
+  - `hermes-agent/`：hermes-agent 源码，本项目记忆系统的主要参考对象。
+  - `codex/`：OpenAI Codex CLI（Rust，`codex-rs`），参考其编码 agent 架构。
+  - `knowledge-catalog/`：Google Cloud Knowledge Catalog（前身 Dataplex）示例，含 `okf/`（Open Knowledge Format + reference agent）、`toolbox/`、`samples/`，参考其上下文管理、富集与检索方案。
+- `notes/hermes-memory-digest.md`：从下列 hermes 文档提炼的精读笔记，已按本项目目标筛过；平时优先看这份。
 
 ## 外部 Provider 范围
 
-我们**只适配两个，且都要本地模式**：
+只适配两个，且都要本地模式：
 
-| Provider  | 选用本地模式               | 说明                                                                                  |
-| --------- | -------------------------- | ------------------------------------------------------------------------------------- |
-| Hindsight | `local_embedded`           | hermes 自带这一模式，跑本地 PostgreSQL daemon；接口可直接参考其插件实现。             |
-| Mem0      | OSS `Memory` 本地模式      | hermes 的 mem0 插件**只支持云端**（`MemoryClient` + API key），本地化时我们参考的是 `mem0` 官方库 OSS 模式（`from mem0 import Memory`，自配 LLM + 向量库）。其 plugin 的接口/线程模型仍可借鉴。 |
+| Provider  | 本地模式              | 说明 |
+| --------- | --------------------- | ---- |
+| Hindsight | `local_embedded`      | hermes 自带，跑本地 PostgreSQL daemon；接口直接参考其插件实现。 |
+| Mem0      | OSS `Memory` 本地模式 | hermes 的 mem0 插件只支持云端（`MemoryClient` + API key）；本地化参考 `mem0` 官方库 OSS 模式（`from mem0 import Memory`，自配 LLM + 向量库），其插件的接口/线程模型仍可借鉴。 |
 
-其他 6 个 provider（Honcho / OpenViking / Holographic / RetainDB / ByteRover / Supermemory）**不在本项目范围内**，相关文档无须深读。
+其余 6 个 provider（Honcho / OpenViking / Holographic / RetainDB / ByteRover / Supermemory）不在范围内。
 
-## 参考阅读：hermes-agent 记忆系统相关文档
+## 参考阅读：hermes-agent 记忆系统文档
 
-下列文档是构建本项目记忆系统时的主要参考来源。精要内容已整理在 `notes/hermes-memory-digest.md`，平时优先看那份。
+精要已整理进 `notes/hermes-memory-digest.md`，平时优先看；需原文再查下列文件（相对 `memory_repo/hermes-agent/`）：
 
-### 一、核心设计（必读）
-
-- `memory_repo/hermes-agent/website/docs/user-guide/features/memory.md` — 内置 `MEMORY.md` 的语义、容量、tool 行为、frozen snapshot 模式（USER.md 部分忽略）
-- `memory_repo/hermes-agent/website/docs/developer-guide/memory-provider-plugin.md` — `MemoryProvider` ABC、生命周期钩子、插件目录结构
-- `memory_repo/hermes-agent/website/docs/developer-guide/prompt-assembly.md` — 系统 prompt 分层组装、缓存边界、记忆注入位置
-- `memory_repo/hermes-agent/website/docs/developer-guide/agent-loop.md` — agent loop 中 memory flush 的时机（compression / 每轮 / session 结束）
-
-### 二、Provider 参考（仅这两个）
-
-- `memory_repo/hermes-agent/plugins/memory/hindsight/README.md` + `__init__.py` — Hindsight plugin 的接口实现与本地模式配置
-- `memory_repo/hermes-agent/plugins/memory/mem0/README.md` + `__init__.py` — Mem0 plugin 的接口实现（仅作生命周期/线程模型参考；其本身不支持本地）
-- `memory_repo/hermes-agent/website/docs/user-guide/features/memory-providers.md` — 只看其中 Hindsight 和 Mem0 两节即可
-
-### 三、参考手册中的 memory 章节
-
-- `memory_repo/hermes-agent/website/docs/reference/tools-reference.md` — `memory` toolset 章节
-- `memory_repo/hermes-agent/website/docs/user-guide/configuration.md` — `Memory Configuration` 章节
-- `memory_repo/hermes-agent/website/docs/reference/cli-commands.md` — `hermes memory` 子命令（仅作 CLI 形态参考）
+- **核心设计**：`website/docs/user-guide/features/memory.md`（`MEMORY.md` 语义/容量/frozen snapshot）、`developer-guide/memory-provider-plugin.md`（`MemoryProvider` ABC、钩子、插件结构）、`developer-guide/prompt-assembly.md`（prompt 分层、缓存边界、记忆注入位置）、`developer-guide/agent-loop.md`（memory flush 时机）
+- **Provider**：`plugins/memory/hindsight/` 与 `plugins/memory/mem0/` 的 `README.md` + `__init__.py`（接口/本地模式/线程模型）、`website/docs/user-guide/features/memory-providers.md`（只看 Hindsight、Mem0 两节）
+- **参考手册**：`website/docs/reference/tools-reference.md`（`memory` toolset）、`user-guide/configuration.md`（Memory Configuration）、`reference/cli-commands.md`（`hermes memory` 子命令）

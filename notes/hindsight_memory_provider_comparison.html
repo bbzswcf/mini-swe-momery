@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mini-memory Hindsight Provider 实现与 Hermes Agent 对比</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --paper: #ffffff;
+      --ink: #202124;
+      --muted: #5f6368;
+      --line: #dadce0;
+      --soft: #eef2f6;
+      --accent: #1f5f8b;
+      --accent-soft: #e7f0f7;
+      --good: #176b3a;
+      --warn: #9a5b00;
+      --bad: #a12b2b;
+      --code-bg: #f1f3f4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+      line-height: 1.6;
+    }
+
+    header {
+      background: var(--paper);
+      border-bottom: 1px solid var(--line);
+      padding: 42px 56px 28px;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 28px 64px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.25;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 30px;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      font-size: 22px;
+      margin-top: 38px;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-top: 22px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    code {
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      background: #202124;
+      color: #f8f9fa;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 22px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: var(--soft);
+      font-weight: 650;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .subtitle {
+      margin-top: 12px;
+      color: var(--muted);
+      max-width: 880px;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 18px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .card h3 {
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 650;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .badge.good {
+      color: var(--good);
+      background: #e9f5ee;
+      border-color: #b9dcc8;
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      background: #fff4de;
+      border-color: #f2d29a;
+    }
+
+    .badge.bad {
+      color: var(--bad);
+      background: #fdeeee;
+      border-color: #efb9b9;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      margin: 16px 0;
+      border-radius: 6px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .step {
+      position: relative;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 104px;
+    }
+
+    .step strong {
+      display: block;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .step small {
+      color: var(--muted);
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      margin: 18px 0;
+    }
+
+    .toc {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin: 20px 0 28px;
+    }
+
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+      margin-right: 18px;
+      white-space: nowrap;
+    }
+
+    .small {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      header {
+        padding: 28px 24px 20px;
+      }
+
+      .grid, .two-col, .flow {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>mini-memory Hindsight Provider 实现与 Hermes Agent 对比</h1>
+    <p class="subtitle">
+      本报告说明当前 <code>src/minisweagent/memory/providers/hindsight.py</code> 的实现方式，
+      它如何接入 <code>MemoryAgent</code> / <code>MemoryManager</code>，以及它相对
+      <code>hermes-agent/plugins/memory/hindsight</code> 的取舍、已补齐能力和仍然缺失的能力。
+    </p>
+    <p class="meta">
+      代码状态：基于当前工作树中已实现的 Hindsight 修复，包括任务结束同步写入、外部 PostgreSQL、initial recall 和 tags/filter。
+    </p>
+  </header>
+
+  <main>
+    <nav class="toc">
+      <a href="#summary">总体结论</a>
+      <a href="#mini-architecture">当前实现</a>
+      <a href="#lifecycle">生命周期</a>
+      <a href="#config">配置</a>
+      <a href="#hermes">Hermes 对照</a>
+      <a href="#comparison">能力对比</a>
+      <a href="#swebench">SWE-bench-Pro 影响</a>
+      <a href="#remaining">剩余差距</a>
+    </nav>
+
+    <section id="summary">
+      <h2>1. 总体结论</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>当前定位</h3>
+          <p>
+            mini-memory 的 Hindsight provider 是一个面向 SWE-bench 类代码任务的轻量本地 provider。
+            它只支持 Hindsight <code>local_embedded</code> 路径，通过 embedded daemon + PostgreSQL/pgvector
+            实现长期记忆抽取、召回和 reflect。
+          </p>
+        </div>
+        <div class="card">
+          <h3>近期已补齐</h3>
+          <p>
+            已补齐几个会直接影响实验可信度的问题：同一 <code>document_id</code> 下使用
+            <code>update_mode="append"</code>，但自动 transcript 不再每个 tool step 后写入；
+            <code>sync_turn</code> 只 buffer，<code>on_session_end</code> 用
+            <code>retain_async=false</code> 同步写一次完整 task transcript，并支持外部 PostgreSQL 与初始 recall overlay。
+          </p>
+        </div>
+        <div class="card">
+          <h3>与 Hermes 的主要差异</h3>
+          <p>
+            Hermes 是完整交互式 agent 产品的 provider：支持 cloud/local_external/local_embedded、
+            per-turn auto prefetch、多 profile/gateway metadata、session switch、配置向导和更多控制旋钮。
+            mini-memory 保留更小的接口面，重点服务链式实验。
+          </p>
+        </div>
+      </div>
+
+      <div class="callout">
+        最关键的实验含义：现在 mini-memory Hindsight 已经可以作为 SWE-bench-Pro 的一个消融变量运行，
+        但它不是 Hermes 的完整 hybrid memory 行为。它默认只有一次初始自动召回，之后仍主要依赖模型主动调用
+        <code>hindsight_recall</code> / <code>hindsight_reflect</code>。
+      </div>
+    </section>
+
+    <section id="mini-architecture">
+      <h2>2. 当前 mini-memory Hindsight provider 怎么实现</h2>
+
+      <h3>2.1 代码边界</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>src/minisweagent/memory/provider.py</code></td>
+            <td>定义最小 <code>MemoryProvider</code> ABC：tool schemas、tool dispatch、静态 prompt、initial context、turn sync、session end、builtin mirror 和 shutdown。</td>
+          </tr>
+          <tr>
+            <td><code>src/minisweagent/memory/manager.py</code></td>
+            <td>组合内置 <code>MEMORY.md</code>、可选外部 provider、SQLite session search 和 consolidation；负责工具路由和生命周期分发。</td>
+          </tr>
+          <tr>
+            <td><code>src/minisweagent/agents/memory.py</code></td>
+            <td>把 memory/provider tools 注入模型 <code>extra_tools</code>，路由 memory tool call，并在 run/step/finally 中触发生命周期。</td>
+          </tr>
+          <tr>
+            <td><code>src/minisweagent/memory/providers/hindsight.py</code></td>
+            <td>封装 Hindsight embedded daemon，暴露 <code>hindsight_retain</code>、<code>hindsight_recall</code>、<code>hindsight_reflect</code> 三个工具。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2.2 Provider 的内部结构</h3>
+      <div class="two-col">
+        <div class="card">
+          <h3>同步写入层</h3>
+          <p>
+            <code>sync_turn()</code> 把每个已完成 turn 序列化为 JSON 并保存在内存 buffer。
+            Hindsight 不再在每轮 tool call 后写后端；任务结束时由 <code>on_session_end()</code>
+            同步调用一次 <code>aretain_batch()</code>，写完后 runner 才进入下一个 issue。
+          </p>
+        </div>
+        <div class="card">
+          <h3>异步 client 层</h3>
+          <p>
+            provider 内部维护一个后台 asyncio loop。Hindsight client 的 async 方法通过
+            <code>asyncio.run_coroutine_threadsafe()</code> 派发到这个 loop，再用
+            <code>request_timeout</code> 控制等待时间。
+          </p>
+        </div>
+      </div>
+
+      <h3>2.3 三个工具</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>工具</th>
+            <th>用途</th>
+            <th>当前参数</th>
+            <th>返回</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>hindsight_retain</code></td>
+            <td>主动写入一段叙事型工程经验，让 Hindsight 抽取实体、事实和索引。</td>
+            <td><code>content</code> 必填，<code>context</code> 可选，<code>tags</code> 可选。</td>
+            <td><code>{"success": true, "message": "Memory stored."}</code> 或结构化错误。</td>
+          </tr>
+          <tr>
+            <td><code>hindsight_recall</code></td>
+            <td>按 query 搜索长期记忆，返回 ranked memory text。</td>
+            <td><code>query</code> 必填；provider 配置可附加 <code>recall_tags</code> 和 <code>tags_match</code>。</td>
+            <td><code>{"success": true, "results": [...], "count": n}</code>。</td>
+          </tr>
+          <tr>
+            <td><code>hindsight_reflect</code></td>
+            <td>对已有长期记忆做 LLM synthesis，适合问“类似问题以前有什么经验”。</td>
+            <td><code>query</code> 必填。</td>
+            <td><code>{"success": true, "answer": "..."}</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2.4 关键可靠性机制</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>机制</th>
+            <th>当前实现</th>
+            <th>为什么重要</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>append 写入</td>
+            <td><code>_retain_session_transcript()</code> 的单个 task transcript item 带 <code>update_mode="append"</code>。</td>
+            <td>保留 append 语义，同时避免每个 tool step 都触发 Hindsight extraction。</td>
+          </tr>
+          <tr>
+            <td>失败传播</td>
+            <td>任务结束写入是同步调用；retain 失败会从 <code>on_session_end()</code> 抛出，不再被后台 writer 静默吞掉。</td>
+            <td>正式链式实验能更早暴露 Hindsight 后端不可用或 extraction 失败。</td>
+          </tr>
+          <tr>
+            <td>同步任务边界</td>
+            <td><code>on_session_end()</code> 强制 <code>retain_async=false</code>；<code>shutdown()</code> 只负责关闭 client 和 loop。</td>
+            <td>链式实验中一个 instance 结束时，经验已写入后才会服务下一个 instance。</td>
+          </tr>
+          <tr>
+            <td>stale daemon retry</td>
+            <td>遇到 connection refused、server disconnected 等连接类错误时，清空 client 并重试一次。</td>
+            <td>embedded daemon idle shutdown 或短暂断连时，不让一次工具调用直接失败。</td>
+          </tr>
+          <tr>
+            <td>external Postgres</td>
+            <td><code>database_url</code> 透传给 <code>HindsightEmbedded</code>，最终进入 daemon env。</td>
+            <td>可以使用外部带 pgvector 的 PostgreSQL，绕过 pg0/pgvector 二进制和宿主 glibc 不兼容问题。</td>
+          </tr>
+          <tr>
+            <td>fail-fast</td>
+            <td><code>fail_fast=True</code> 时 initialize 会调用 client warmup。</td>
+            <td>用于实验启动时提前暴露 Hindsight 环境问题，避免跑完才发现 memory backend 不健康。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="lifecycle">
+      <h2>3. 生命周期与数据流</h2>
+
+      <div class="flow">
+        <div class="step">
+          <strong>1. Agent 构造</strong>
+          <small><code>MemoryAgent.__init__</code> 从配置构造 <code>MemoryManager</code>，把 memory/Hindsight tools 追加到模型 <code>extra_tools</code>。</small>
+        </div>
+        <div class="step">
+          <strong>2. run 初始化</strong>
+          <small><code>manager.initialize(session_id)</code> 加载 frozen MEMORY snapshot，并初始化 Hindsight profile/bank/document。</small>
+        </div>
+        <div class="step">
+          <strong>3. 初始召回</strong>
+          <small><code>initial_context(task)</code> 可用 task 做一次 Hindsight recall，并把结果 prepend 到首个 user message。</small>
+        </div>
+        <div class="step">
+          <strong>4. 工具调用</strong>
+          <small>模型可调用 <code>memory</code>、<code>session_search</code>、<code>hindsight_*</code>。provider tool 由 manager 路由。</small>
+        </div>
+        <div class="step">
+          <strong>5. turn sync</strong>
+          <small>每轮工具 observation 追加前，agent 把 previous user/tool + assistant summary 交给 provider；Hindsight 只写入内存 buffer。</small>
+        </div>
+        <div class="step">
+          <strong>6. finally 收尾</strong>
+          <small><code>on_session_end()</code> 同步 retain Hindsight transcript、记录 session store；owned manager 再 shutdown。</small>
+        </div>
+      </div>
+
+      <h3>3.1 初始化细节</h3>
+      <p>
+        <code>HindsightProvider.initialize()</code> 会基于传入 <code>session_id</code> 创建
+        <code>document_id = session_id + UTC timestamp</code>。默认 <code>profile</code> 和
+        <code>bank_id</code> 为 <code>mini-memory</code> 时，会用 <code>memory.home</code> 的 sha1
+        hash 派生 scoped name，避免不同 chain 的 memory home 共用同一 Hindsight bank。
+      </p>
+
+      <h3>3.2 初始召回 overlay</h3>
+      <p>
+        mini-memory 没有实现 Hermes 的 per-turn prefetch，而是新增了一个更小的
+        <code>initial_context(query)</code> 钩子。它只在每个 run 开始时用原始 task 做一次 recall，
+        将结果包装为 <code>&lt;memory-context&gt;</code> 块并 prepend 到首个 user message。
+        这样不会修改 system prompt，也不破坏 frozen MEMORY snapshot 的语义。
+      </p>
+
+      <h3>3.3 写入路径</h3>
+      <pre>sync_turn(user, assistant)
+  -> append JSON turn to _session_turns
+  -> no Hindsight network write on the tool-call hot path
+
+on_session_end(messages)
+  -> build one full task transcript from _session_turns
+  -> aretain_batch(bank_id, items=[... update_mode="append" ...], document_id=..., retain_async=False)
+  -> on success: clear _session_turns
+  -> on failure: propagate the retain error</pre>
+
+      <h3>3.4 内置 MEMORY.md 镜像</h3>
+      <p>
+        <code>MemoryManager._handle_builtin()</code> 在内置 <code>memory</code> 工具写入成功后调用
+        <code>provider.on_memory_write()</code>。Hindsight provider 会同步镜像 <code>add</code> 和
+        <code>replace</code>，跳过 <code>remove</code> 和空内容。这样紧凑 curated facts 可以进入
+        Hindsight 长期记忆，但当前 consolidation 直接写 <code>BuiltinMemory</code> 的路径仍不经过
+        manager tool，因此不会自动镜像。
+      </p>
+    </section>
+
+    <section id="config">
+      <h2>4. 当前配置项</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>配置项</th>
+            <th>默认值</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>profile</code></td><td><code>mini-memory</code></td><td>Hindsight embedded daemon profile。默认值会按 memory home 派生 scoped name。</td></tr>
+          <tr><td><code>bank_id</code></td><td><code>mini-memory</code></td><td>Hindsight memory bank。默认值同样按 memory home 派生 scoped name。</td></tr>
+          <tr><td><code>budget</code></td><td><code>mid</code></td><td>Recall/reflect 预算，支持 <code>low</code>、<code>mid</code>、<code>high</code>。</td></tr>
+          <tr><td><code>llm_provider</code></td><td><code>openai_compatible</code></td><td>传给 Hindsight daemon 的 LLM provider；openai-compatible/openrouter 会转换为 OpenAI wire format。</td></tr>
+          <tr><td><code>llm_model</code></td><td><code>gpt-5.4-2026-03-05</code></td><td>与主 SWE-bench-Pro 实验模型一致的 ModelHub 模型名。</td></tr>
+          <tr><td><code>llm_base_url</code></td><td>ModelHub chat-completions endpoint</td><td>Hindsight 使用 <code>chat.completions</code>，不是主 agent 的 Responses API endpoint。</td></tr>
+          <tr><td><code>database_url</code></td><td>空</td><td>可选外部 PostgreSQL URL。用于指定已安装 pgvector 的外部数据库。</td></tr>
+          <tr><td><code>request_timeout</code></td><td><code>120.0</code></td><td>单次 Hindsight async operation 等待上限。</td></tr>
+          <tr><td><code>drain_timeout</code></td><td><code>30.0</code></td><td>保留为配置兼容项；Hindsight 自动 transcript 现在在 <code>on_session_end</code> 同步写入，不再依赖 retain queue drain。</td></tr>
+          <tr><td><code>idle_timeout</code></td><td><code>300</code></td><td>embedded daemon 空闲自动退出时间。</td></tr>
+          <tr><td><code>recall_max_tokens</code></td><td><code>4096</code></td><td>Hindsight recall 返回 token 上限。</td></tr>
+          <tr><td><code>recall_max_input_chars</code></td><td><code>800</code></td><td>initial recall query 最大输入字符数。</td></tr>
+          <tr><td><code>recall_tags</code></td><td>空列表</td><td>Recall 时附加的 tags filter。</td></tr>
+          <tr><td><code>recall_tags_match</code></td><td><code>any</code></td><td>Recall tag matching mode：<code>any</code>、<code>all</code>、<code>any_strict</code>、<code>all_strict</code>。</td></tr>
+          <tr><td><code>retain_context</code></td><td><code>code-task trial in mini-memory</code></td><td>任务结束自动 transcript 写入 Hindsight 时的 context label。</td></tr>
+          <tr><td><code>retain_tags</code></td><td>空列表</td><td>自动 retain 和 tool retain 的默认 tags。</td></tr>
+          <tr><td><code>retain_async</code></td><td><code>true</code></td><td>tool retain 的默认配置项；任务结束 transcript 写入会强制 <code>false</code>，确保下个 issue 前可见。</td></tr>
+          <tr><td><code>mirror_builtin_writes</code></td><td><code>true</code></td><td>是否把内置 memory 工具成功写入镜像到 Hindsight。</td></tr>
+          <tr><td><code>auto_recall_on_init</code></td><td><code>true</code></td><td>每个 run 开始时是否用 task 做一次 recall overlay。</td></tr>
+          <tr><td><code>fail_fast</code></td><td><code>false</code></td><td>是否在 initialize 阶段启动/检查 embedded client。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>4.1 SWE-bench-Pro 示例配置</h3>
+      <pre>memory:
+  provider: hindsight
+  hindsight:
+    llm_provider: openai_compatible
+    llm_model: gpt-5.4-2026-03-05
+    llm_base_url: https://aidp.bytedance.net/api/modelhub/online/v2/crawl/openai/deployments/gpt_openapi
+    database_url: postgresql://hindsight:hindsight@127.0.0.1:55432/hindsight
+    auto_recall_on_init: true
+    retain_async: false  # task-end transcript writes force this even if omitted
+    drain_timeout: 30    # compatibility only for Hindsight transcript writes
+    recall_tags: ["repo:example", "chain:chain-id"]
+    retain_tags: ["repo:example", "chain:chain-id"]</pre>
+    </section>
+
+    <section id="hermes">
+      <h2>5. Hermes Agent Hindsight provider 怎么实现</h2>
+
+      <p>
+        Hermes 的 Hindsight provider 是面向完整 Hermes 产品的 plugin，实现范围明显更大。它不仅是
+        local embedded adapter，也负责配置加载、setup wizard、cloud/local_external 模式、gateway/session/profile
+        metadata、auto recall/prefetch、session switch 和 compression 生命周期。
+      </p>
+
+      <h3>5.1 Hermes 的核心能力</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>能力</th>
+            <th>Hermes 实现方式</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>多模式</td>
+            <td>支持 <code>cloud</code>、<code>local_embedded</code>、<code>local_external</code>；不同模式安装不同依赖。</td>
+          </tr>
+          <tr>
+            <td>配置来源</td>
+            <td>从 profile-scoped config、legacy config 和环境变量读取；还有 setup wizard 保存配置和 secret。</td>
+          </tr>
+          <tr>
+            <td>Auto recall</td>
+            <td><code>queue_prefetch()</code> 在上一 turn 后后台 recall；<code>prefetch()</code> 在下一 turn 前取出结果并注入上下文。</td>
+          </tr>
+          <tr>
+            <td>Memory mode</td>
+            <td>支持 <code>hybrid</code>、<code>context</code>、<code>tools</code>：可以只注入上下文、只提供工具，或两者兼有。</td>
+          </tr>
+          <tr>
+            <td>Retain 节流</td>
+            <td>支持 <code>auto_retain</code> 和 <code>retain_every_n_turns</code>，可以每 N turn 写一次。</td>
+          </tr>
+          <tr>
+            <td>Append 能力探测</td>
+            <td>通过 <code>/version</code> 探测 Hindsight API 是否支持 <code>update_mode="append"</code>，支持则用 session-scoped document append，否则回退到 per-process document。</td>
+          </tr>
+          <tr>
+            <td>Tags/filter</td>
+            <td>支持 default retain tags、per-call tags、recall tags、tags_match、recall types。</td>
+          </tr>
+          <tr>
+            <td>Bank 模板</td>
+            <td>支持 <code>bank_id_template</code>，可按 profile/workspace/platform/user/session 派生 bank。</td>
+          </tr>
+          <tr>
+            <td>Session switch</td>
+            <td>实现 <code>on_session_switch()</code>，在 resume/branch/reset/new/compression 时 flush 旧 buffer、清 prefetch、记录 parent lineage。</td>
+          </tr>
+          <tr>
+            <td>Daemon 管理</td>
+            <td>local embedded 初始化时后台启动 daemon，写日志；配置变化时重启 daemon；连接断开时重建 client 重试。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 Hermes 的 prefetch 机制</h3>
+      <p>
+        Hermes 的 auto recall 是两阶段的：上一轮结束时 <code>queue_prefetch(query)</code> 后台运行，
+        下一轮开始前 <code>prefetch()</code> 取出缓存结果并注入当前 user context。它不会把 recall 结果写进
+        system prompt，而是作为非缓存层的临时上下文。这对交互式 agent 很有用，因为模型不需要主动记得调用
+        <code>hindsight_recall</code>。
+      </p>
+
+      <h3>5.3 Hermes 的 session switch 机制</h3>
+      <p>
+        Hermes 是长期运行的多会话 agent，session id 会在 resume、branch、reset、new、compression 等路径中变化。
+        Hindsight provider 会在切换前 flush 旧 session 的 buffer，切换后清空 turn buffer 和 prefetch result，
+        并把 parent/session lineage 放入 tags/metadata。这对网关、多用户和长会话很重要。
+      </p>
+    </section>
+
+    <section id="comparison">
+      <h2>6. mini-memory 与 Hermes 的逐项对比</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>mini-memory 当前实现</th>
+            <th>Hermes Agent 实现</th>
+            <th>评价</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>目标场景</td>
+            <td>SWE-bench 类自动代码任务，链式 trial 间复用工程经验。</td>
+            <td>通用交互式 agent，覆盖 CLI、gateway、多 profile、长期用户会话。</td>
+            <td><span class="badge good">取舍合理</span> mini-memory 更窄、更实验导向。</td>
+          </tr>
+          <tr>
+            <td>模式支持</td>
+            <td>只支持 <code>local_embedded</code>，但可通过 <code>database_url</code> 使用外部 PostgreSQL。</td>
+            <td>支持 cloud、local_embedded、local_external。</td>
+            <td><span class="badge warn">能力较少</span> 如果要服务大规模并行，local_external HTTP server 更好管理。</td>
+          </tr>
+          <tr>
+            <td>模型配置</td>
+            <td>默认 ModelHub <code>gpt-5.4-2026-03-05</code>，走 chat-completions endpoint。</td>
+            <td>按 provider 映射默认模型，如 OpenAI 默认 <code>gpt-4o-mini</code>。</td>
+            <td><span class="badge good">贴合主实验</span> 但要记住 Hindsight 不走 Responses API。</td>
+          </tr>
+          <tr>
+            <td>Tool schema</td>
+            <td>返回 mini-swe-agent 使用的 OpenAI wrapper 格式：<code>{"type":"function","function":...}</code>。</td>
+            <td>Hermes plugin 返回 unwrapped tool schema。</td>
+            <td><span class="badge good">适配本项目</span> 与 model action parser 对齐。</td>
+          </tr>
+          <tr>
+            <td>Prompt 注入</td>
+            <td>静态 provider block 进入 system prompt；initial recall 进入首个 user message。</td>
+            <td>静态 block + per-turn prefetch context overlay。</td>
+            <td><span class="badge warn">更保守</span> cache 友好，但自动召回频率低于 Hermes。</td>
+          </tr>
+          <tr>
+            <td>自动召回</td>
+            <td>仅 <code>auto_recall_on_init</code> 一次，之后靠工具主动调用。</td>
+            <td>可每 turn 后台 prefetch，下 turn 注入。</td>
+            <td><span class="badge warn">可能低估 Hindsight</span> 如果模型不主动 recall，收益会变小。</td>
+          </tr>
+          <tr>
+            <td>自动写入</td>
+            <td>每 turn 后只 buffer；任务结束时同步写一次完整 task transcript。</td>
+            <td>支持 <code>auto_retain</code> 和 <code>retain_every_n_turns</code>。</td>
+            <td><span class="badge good">更适合 SWE-bench</span> 避免每个 tool step 触发 extraction，同时保留完整任务上下文。</td>
+          </tr>
+          <tr>
+            <td>Append 语义</td>
+            <td>直接使用 <code>update_mode="append"</code>。</td>
+            <td>先探测 API 版本，支持 append 则用，否则回退。</td>
+            <td><span class="badge good">当前可用</span> 依赖 Hindsight client/API 版本较新；可后续补 version probe。</td>
+          </tr>
+          <tr>
+            <td>失败保留</td>
+            <td>任务结束同步 retain；失败会直接传播，不再后台重试。</td>
+            <td>writer 捕获异常并记录；更完整地处理 session switch flush。</td>
+            <td><span class="badge warn">偏 fail-fast</span> 更利于实验发现后端问题，但没有后台自动重试。</td>
+          </tr>
+          <tr>
+            <td>Shutdown</td>
+            <td>自动 transcript 已在 <code>on_session_end</code> 同步完成；shutdown 关闭 client 和本 provider 的 asyncio loop。</td>
+            <td>writer join 10s，prefetch join，特殊处理 embedded inner client，不停全局共享 loop。</td>
+            <td><span class="badge warn">不同并发模型</span> mini 每 provider 一个 loop；Hermes 用 module-global loop 支持多 provider 实例。</td>
+          </tr>
+          <tr>
+            <td>Tags/filter</td>
+            <td>支持 <code>retain_tags</code>、tool tags、<code>recall_tags</code>、<code>recall_tags_match</code>。</td>
+            <td>支持 retain tags、recall tags、tags_match、types、source、lineage tags。</td>
+            <td><span class="badge good">基础已补齐</span> 但 lineage 和 types 还没有。</td>
+          </tr>
+          <tr>
+            <td>Bank 隔离</td>
+            <td>默认按 <code>memory.home</code> hash 派生 profile/bank；显式配置则完全尊重用户指定。</td>
+            <td>支持 <code>bank_id_template</code>，可用 profile/workspace/platform/user/session。</td>
+            <td><span class="badge warn">适合 chain home 隔离</span> 但不如模板灵活。</td>
+          </tr>
+          <tr>
+            <td>Session switch</td>
+            <td>无 <code>on_session_switch</code>。</td>
+            <td>完整实现，处理 resume/branch/reset/new/compression。</td>
+            <td><span class="badge warn">当前非主要问题</span> mini-swe-agent 每 instance run 边界清晰；未来 resume/compression 要补。</td>
+          </tr>
+          <tr>
+            <td>Setup/依赖管理</td>
+            <td>通过 optional dependency <code>[hindsight]</code> 安装；无 setup wizard。</td>
+            <td>setup wizard 按模式安装依赖、保存 config/env。</td>
+            <td><span class="badge warn">实验环境需脚本化</span> mini 更适合 config overlay + runner。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="swebench">
+      <h2>7. 对 SWE-bench-Pro 任务性能的影响</h2>
+
+      <h3>7.1 已经解决的高风险点</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>问题</th>
+            <th>修复后状态</th>
+            <th>对实验的意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>同一 document 下 turn 覆盖</td>
+            <td><span class="badge good">已修</span> 任务结束单次 transcript item 仍带 <code>update_mode="append"</code>，避免同 document replace 语义误覆盖。</td>
+            <td>完整任务轨迹作为一个上下文更完整的 document 写入。</td>
+          </tr>
+          <tr>
+            <td>每个 tool step 后写入过慢且噪声大</td>
+            <td><span class="badge good">已改</span> <code>sync_turn</code> 只 buffer，Hindsight 不在 tool-call 热路径上写后端。</td>
+            <td>减少 LLM extraction 次数和 daemon 压力，召回内容拥有更完整任务上下文。</td>
+          </tr>
+          <tr>
+            <td>实例结束时记忆尚未可见</td>
+            <td><span class="badge good">已改</span> <code>on_session_end</code> 强制 <code>retain_async=false</code> 同步写入。</td>
+            <td>step N 的经验写完后才进入 step N+1。</td>
+          </tr>
+          <tr>
+            <td>backend 不健康但实验继续</td>
+            <td><span class="badge warn">可配置</span> <code>fail_fast</code> 可在 initialize 时提前启动/检查 daemon。</td>
+            <td>正式实验建议打开 fail-fast，避免把基础设施失败误判为 memory 方法无效。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>7.2 仍会影响 Hindsight 上限的取舍</h3>
+      <div class="callout">
+        mini-memory 当前不是 Hermes hybrid 模式。它只在实例开头做一次自动 recall，后续不做 per-turn prefetch。
+        如果模型在解题中不主动调用 <code>hindsight_recall</code>，Hindsight 的收益会低于 Hermes 自动注入上下文的上限。
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>取舍</th>
+            <th>可能影响</th>
+            <th>建议</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>只做 initial recall</td>
+            <td>任务中途出现的新线索不会自动触发更精准 recall。</td>
+            <td>先保留；如果 Hindsight 消融收益偏低，再加 per-turn 或 every-N-turn prefetch overlay。</td>
+          </tr>
+          <tr>
+            <td>无 retain_every_n_turns</td>
+            <td>已不再每 turn 写 Hindsight；但 task transcript 仍可能很长。</td>
+            <td>后续可增加 max chars、结构化摘要或 session-end summarizing retain。</td>
+          </tr>
+          <tr>
+            <td>无 repo/chain 自动 tags</td>
+            <td>当前 tags 需要 overlay 显式配置，否则同 bank 内召回可能混杂。</td>
+            <td>chain runner 可在 overlay 中注入 <code>retain_tags</code>/<code>recall_tags</code>；后续可自动从 instance metadata 生成。</td>
+          </tr>
+          <tr>
+            <td>task-end retain 失败会中断链</td>
+            <td>这是刻意的 fail-fast 行为：下个 issue 不能在记忆未写完时开始。</td>
+            <td>正式实验应保证外部 PostgreSQL/daemon 稳定，并适当增大 <code>request_timeout</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="remaining">
+      <h2>8. 仍然缺失或值得后续补的能力</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>优先级</th>
+            <th>能力</th>
+            <th>当前状态</th>
+            <th>建议</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge warn">P1</span></td>
+            <td>API version probe</td>
+            <td>mini-memory 直接使用 <code>update_mode="append"</code>，没有像 Hermes 那样探测 API 版本。</td>
+            <td>如果实验环境版本固定且新，风险低；若要跨机器复现，应补 <code>/version</code> probe。</td>
+          </tr>
+          <tr>
+            <td><span class="badge warn">P1</span></td>
+            <td>正式 fail-fast overlay</td>
+            <td>代码已有 <code>fail_fast</code>，但默认示例仍是 false。</td>
+            <td>正式 Hindsight 实验 overlay 建议设为 true，避免 silent degradation。</td>
+          </tr>
+          <tr>
+            <td><span class="badge warn">P2</span></td>
+            <td>自动 repo/chain tags</td>
+            <td>有通用 tags 配置，但还不会自动从 SWE-bench instance/chain metadata 派生。</td>
+            <td>在 benchmark runner 层将 repo、chain_id、instance_id 注入 provider config 或 initialize kwargs。</td>
+          </tr>
+          <tr>
+            <td><span class="badge warn">P2</span></td>
+            <td>task transcript 清洗/摘要</td>
+            <td>当前任务结束写入完整 buffered turns，可能包含长日志和无效探索。</td>
+            <td>增加 max chars、跳过超大日志，或在 session end 先生成结构化摘要再 retain。</td>
+          </tr>
+          <tr>
+            <td><span class="badge warn">P2</span></td>
+            <td>per-turn prefetch</td>
+            <td>mini-memory 当前只做 initial recall。</td>
+            <td>如果想评估 Hindsight 上限，可增加 cache-friendly user overlay，不要改 system prompt。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P3</span></td>
+            <td>local_external HTTP 模式</td>
+            <td>当前只有 embedded client + 可选外部 database。</td>
+            <td>大量并行 worker 时，独立 Hindsight server 可能更好运维；可后续补。</td>
+          </tr>
+          <tr>
+            <td><span class="badge">P3</span></td>
+            <td>session switch/compression hooks</td>
+            <td>mini-swe-agent 当前 run 边界明确，未实现。</td>
+            <td>如果未来引入 resume/compression/长驻 agent，需要补齐。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>8.1 推荐的正式 Hindsight 实验姿势</h3>
+      <pre># 1. 使用外部 PostgreSQL + pgvector，避免 pg0 二进制和宿主 glibc 风险
+database_url: postgresql://...
+
+# 2. 链式实验中 task-end transcript 写入已强制同步，确保下一实例可见
+retain_async: false
+request_timeout: 300
+drain_timeout: 30  # compatibility only for Hindsight transcript writes
+
+# 3. 正式实验 fail fast，避免 backend 坏了但 agent 继续跑
+fail_fast: true
+
+# 4. 为 chain/repo 设置 tags，降低召回污染
+retain_tags: ["repo:&lt;repo&gt;", "chain:&lt;chain_id&gt;"]
+recall_tags: ["repo:&lt;repo&gt;", "chain:&lt;chain_id&gt;"]
+recall_tags_match: all
+
+# 5. 保留 initial recall，让每个 instance 开局看到链内经验
+auto_recall_on_init: true</pre>
+    </section>
+
+    <section>
+      <h2>9. 验证状态</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>验证</th>
+            <th>结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Memory tests</td>
+            <td><span class="badge good">通过</span> <code>uv run --python /usr/bin/python3.11 pytest tests/memory -q</code>，159 passed。</td>
+          </tr>
+          <tr>
+            <td>Compile check</td>
+            <td><span class="badge good">通过</span> <code>python -m compileall -q src/minisweagent/memory src/minisweagent/agents/memory.py</code>。</td>
+          </tr>
+          <tr>
+            <td>真实 Hindsight append smoke</td>
+            <td><span class="badge good">通过</span> 外部 PostgreSQL/pgvector 下，同一 document 保留 first/second 两个 turn，覆盖问题解除。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small">
+        说明：本报告是静态 HTML 文档，不依赖外部网络资源或 JavaScript。
+      </p>
+    </section>
+  </main>
+</body>
+</html>

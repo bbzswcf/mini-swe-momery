@@ -1,0 +1,38 @@
+# SWE-bench-Pro ablation: MEMORY.md + session_search + session-end consolidation + Hindsight.
+# Use as an overlay on top of swebench_pro.yaml:
+#   uv run --python 3.11 --extra hindsight mini-extra swebench \
+#     -c swebench_pro.yaml -c swebench_pro_hindsight_consolidation.yaml ...
+
+agent:
+  memory:
+    sessions_enabled: true
+    consolidation:
+      on_session_end: true
+      every_n_steps: 0
+      max_actions: 3
+      summary_max_chars: 4000
+    provider: hindsight
+    hindsight:
+      # Share one local embedded daemon across chain workers; bank_id remains
+      # per-chain because the default `mini-memory` bank is derived from memory.home.
+      profile: mini-memory-hindsight-shared
+      bank_id: mini-memory
+      budget: mid
+      llm_provider: openai_compatible
+      llm_model: gpt-5.4-2026-03-05
+      llm_api_key: ""
+      llm_base_url: https://aidp.bytedance.net/api/modelhub/online/v2/crawl/openai/deployments/gpt_openapi
+      database_url: postgresql://hindsight:hindsight@127.0.0.1:55432/hindsight
+      fail_fast: false
+      auto_recall_on_init: true
+      request_timeout: 1200
+      drain_timeout: 30
+      idle_timeout: 300
+      recall_max_tokens: 4096
+      recall_max_input_chars: 800
+      recall_tags: []
+      recall_tags_match: any
+      retain_context: SWE-bench trial in mini-memory
+      retain_tags: []
+      retain_async: false
+      mirror_builtin_writes: true

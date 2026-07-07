@@ -81,6 +81,22 @@ contree = [
     "contree-sdk>=0.2.0",
 ]
 
+# Memory: Hindsight local_embedded mode (local PostgreSQL daemon + LLM API key).
+# `hindsight-all` pulls the local daemon + client; we constrain the client to
+# >=0.4.22 to match the API surface mini-memory targets.
+hindsight = [
+    "hindsight-all; python_version >= '3.11'",
+    "hindsight-client>=0.4.22; python_version >= '3.11'",
+    "packaging",
+]
+
+# Memory: Mem0 OSS local mode (chroma-backed by default; needs an LLM + an
+# embedder — most setups will reuse the agent's OpenAI key for both).
+mem0 = [
+    "mem0ai",
+    "chromadb",
+]
+
 [project.urls]
 Documentation = "https://mini-swe-agent.com/latest/"
 Repository = "https://github.com/SWE-agent/mini-swe-agent"
