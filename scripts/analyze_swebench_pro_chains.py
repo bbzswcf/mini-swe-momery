@@ -423,10 +423,10 @@ def print_summary(result: dict) -> None:
 def main(
     data_path: Annotated[Path, typer.Option(help="Path to swe_bench_pro.json.")] = Path("data/swe_bench_pro.json"),
     output_path: Annotated[Path, typer.Option(help="Where to write the chain analysis JSON.")] = Path(
-        "data/swe_bench_pro_issue_chains.json"
+        "data/cache/swe_bench_pro_issue_chains.json"
     ),
     commit_cache: Annotated[Path, typer.Option(help="Commit timestamp cache JSON.")] = Path(
-        "data/swe_bench_pro_commit_times.json"
+        "data/cache/swe_bench_pro_commit_times.json"
     ),
     token_env: Annotated[str, typer.Option(help="Environment variable containing a GitHub token.")] = "GITHUB_TOKEN",
     offline: Annotated[bool, typer.Option(help="Only use commit timestamps already present in the cache.")] = False,
@@ -441,7 +441,7 @@ def main(
         typer.Option(help="OpenAI-compatible chat model used to select non-noise files for patch fallbacks."),
     ] = "gpt-5.4-mini-2026-03-17",
     llm_cache: Annotated[Path, typer.Option(help="Cache for LLM patch file selections.")] = Path(
-        "data/swe_bench_pro_llm_file_filter.json"
+        "data/cache/swe_bench_pro_llm_file_filter.json"
     ),
     llm_api_key_env: Annotated[str, typer.Option(help="Environment variable containing the LLM API key.")] = "OPENAI_API_KEY",
     llm_base_url: Annotated[str, typer.Option(help="OpenAI-compatible deployment base URL.")] = (

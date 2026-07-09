@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_chains": "data/swe_bench_pro_issue_chains.json",
+  "source_chains": "data/cache/swe_bench_pro_issue_chains.json",
   "source_dataset": "data/swe_bench_pro.json",
   "ignore_file_freq": 4,
   "min_chain_size": 3,

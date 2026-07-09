@@ -61,5 +61,5 @@
 - `pyproject.toml` 新增可选依赖组：`hindsight`、`mem0`。
 - 新增/扩展测试覆盖 memory manager/agent/provider、tool-call 解析、`litellm_model` / `litellm_response_model` extra tools、Docker 新配置、SWE-bench-Pro 数据/镜像/patch/proxy 行为。
 - 新增 `tests/memory/test_session_store.py`、`tests/memory/test_consolidation.py`、`tests/memory/test_smoke.py`，外加在 `test_manager.py` / `test_integration.py` / `test_memory_agent.py` 中扩展覆盖：`SessionStore` 幂等写入与 FTS5 round-trip、`session_search` tool 路由 + 关闭路径 + 异常参数防御、`consolidation` action 过滤与 `max_actions` 截断、`every_n_steps` 触发节奏、跨 session 的 `MemoryAgent.run` → `session_search` 端到端流转、shipped `swebench_pro.yaml` 通过 `get_agent` 落地后行为符合预期。
-- 另有 `data/swe_bench_pro_fast_10.txt`，用于记录一个 SWE-bench-Pro fast 10 实例子集。
+- 另有 `data/smoke/swe_bench_pro_fast_10.txt`，用于记录一个 SWE-bench-Pro fast 10 实例子集。
 

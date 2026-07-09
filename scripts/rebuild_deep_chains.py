@@ -182,16 +182,16 @@ def build_chain(repo: str, chain: dict, original_by_id: dict[str, dict], chain_o
 @app.command()
 def main(
     chains_path: Annotated[Path, typer.Option(help="Recorded issue-chains JSON (source of files/commit_time).")] = Path(
-        "data/swe_bench_pro_issue_chains.json"
+        "data/cache/swe_bench_pro_issue_chains.json"
     ),
     dataset_path: Annotated[Path, typer.Option(help="Original SWE-bench-Pro JSON.")] = Path("data/swe_bench_pro.json"),
     ignore_file_freq: Annotated[int, typer.Option(help="Ignore files touched by more than this many issues when linking.")] = 4,
     min_chain_size: Annotated[int, typer.Option(help="Minimum issue count required for a chain.")] = 4,
     out_chains: Annotated[Path, typer.Option(help="Output issue-chains JSON.")] = Path(
-        "data/swe_bench_pro_issue_chains_deep.json"
+        "data/cache/swe_bench_pro_issue_chains_deep.json"
     ),
     out_experiments: Annotated[Path, typer.Option(help="Output grouped experiment manifest.")] = Path(
-        "data/swe_bench_pro_chain_experiments_deep.json"
+        "data/cache/swe_bench_pro_chain_experiments_deep.json"
     ),
     out_nodes: Annotated[Path, typer.Option(help="Output one-node-per-line runner manifest.")] = Path(
         "data/swe_bench_pro_chain_experiment_nodes_deep.jsonl"

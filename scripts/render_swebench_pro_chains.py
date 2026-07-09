@@ -166,7 +166,7 @@ def build_chain_view(repo: str, chain: dict) -> dict:
 @app.command()
 def main(
     input_path: Annotated[Path, typer.Option(help="Issue chains JSON to render.")] = Path(
-        "data/swe_bench_pro_issue_chains.json"
+        "data/cache/swe_bench_pro_issue_chains.json"
     ),
     output_path: Annotated[Path, typer.Option(help="Where to write the HTML report.")] = Path(
         "notes/swebench_pro_issue_chains.html"

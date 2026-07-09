@@ -111,7 +111,7 @@ def build_chain(repo: str, chain: dict, original_by_id: dict[str, dict], chain_o
 @app.command()
 def main(
     chains_path: Annotated[Path, typer.Option(help="Input chain JSON.")] = Path(
-        "data/swe_bench_pro_issue_chains.json"
+        "data/cache/swe_bench_pro_issue_chains.json"
     ),
     dataset_path: Annotated[Path, typer.Option(help="Original SWE-bench-Pro JSON.")] = Path(
         "data/swe_bench_pro.json"
