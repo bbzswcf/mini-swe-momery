@@ -334,11 +334,14 @@ def load_issues(
     return issues
 
 
-def issue_chains(issues: list[Issue], min_chain_size: int) -> list[dict]:
+def issue_chains(issues: list[Issue], min_chain_size: int, ignore_file_freq: int = 0) -> list[dict]:
+    file_freq = Counter(file for issue in issues for file in issue.files)
     union_find = UnionFind(len(issues))
     first_issue_by_file: dict[str, int] = {}
     for idx, issue in enumerate(issues):
         for file in issue.files:
+            if ignore_file_freq and file_freq[file] > ignore_file_freq:
+                continue
             if file in first_issue_by_file:
                 union_find.union(first_issue_by_file[file], idx)
             else:
@@ -381,7 +384,7 @@ def issue_chains(issues: list[Issue], min_chain_size: int) -> list[dict]:
     return chains
 
 
-def analyze(issues: list[Issue], min_chain_size: int) -> dict:
+def analyze(issues: list[Issue], min_chain_size: int, ignore_file_freq: int = 0) -> dict:
     repos = []
     for repo, repo_issues in sorted(group_by_repo(issues).items()):
         sorted_issues = sorted(repo_issues, key=lambda issue: (issue.commit_time, issue.instance_id))
@@ -391,7 +394,7 @@ def analyze(issues: list[Issue], min_chain_size: int) -> dict:
                 "issue_count": len(sorted_issues),
                 "first_commit_time": sorted_issues[0].commit_time.isoformat(),
                 "last_commit_time": sorted_issues[-1].commit_time.isoformat(),
-                "chains": issue_chains(sorted_issues, min_chain_size),
+                "chains": issue_chains(sorted_issues, min_chain_size, ignore_file_freq),
             }
         )
     return {"repo_count": len(repos), "issue_count": len(issues), "repos": repos}
@@ -446,6 +449,10 @@ def main(
     ),
     max_patch_chars: Annotated[int, typer.Option(help="Max patch characters sent per LLM filtering request.")] = 12000,
     llm_workers: Annotated[int, typer.Option(help="Max concurrent LLM file-filtering requests.")] = 50,
+    ignore_file_freq: Annotated[
+        int,
+        typer.Option(help="Ignore files touched by more than this many issues when linking (0 disables)."),
+    ] = 0,
 ) -> None:
     result = analyze(
         load_issues(
@@ -457,6 +464,7 @@ def main(
             else None,
         ),
         min_chain_size,
+        ignore_file_freq,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2) + "\n")

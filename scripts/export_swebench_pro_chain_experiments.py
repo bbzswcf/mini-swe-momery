@@ -61,6 +61,7 @@ def build_node(chain: dict, issues: list[dict], idx: int, original: dict) -> dic
         "has_direct_prior_file_overlap": bool(predecessors),
         "future_bridge_only": idx > 0 and not predecessors,
         "duplicate_time_group_size": duplicate_times.get(issue["commit_time"], 1),
+        "chain_length": len(issues),
         "selected_test_files_to_run": parse_jsonish_list(original.get("selected_test_files_to_run", "")),
         "fail_to_pass": parse_jsonish_list(original.get("fail_to_pass", "")),
         "pass_to_pass": parse_jsonish_list(original.get("pass_to_pass", "")),
