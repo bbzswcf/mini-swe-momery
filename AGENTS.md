@@ -18,6 +18,103 @@
 - 默认基线测最小组合：`litellm_response` + `MemoryAgent` + 内置 `MEMORY.md` + 本地 SQLite FTS session recall，保持 `sessions_enabled: true`、`consolidation.on_session_end: false`。consolidation / Hindsight / Mem0 作为后续单独消融变量加入。
 - 另有独立对照基线 **chain-window**（见下节）。
 
+## 全量 no-memory baseline（731 条）
+
+这是独立的全量无记忆基线，不属于上面的 memory 链式实验；因此这里明确使用 `data/swe_bench_pro.json` 的全部 731 条。完整流程必须包括 **inference → predictions 格式转换 → SWE-bench Pro harness 评测**，不能只跑 inference。
+
+### 1. Inference
+
+在本仓库根目录执行；模型 API key 从 `OPENAI_API_KEY` 环境变量读取，不写入仓库：
+
+```bash
+cd ~/code/mini-memory
+export RUN="$PWD/results/swebench_pro_full_nomemory_gpt54"
+export EVAL_REPO="$HOME/code/SWE-bench_Pro-os"
+
+uv run --frozen mini-extra swebench \
+  -c src/minisweagent/config/benchmarks/swebench_pro_nomemory.yaml \
+  --subset data/swe_bench_pro.json \
+  --workers 8 \
+  -o "$RUN"
+```
+
+全量结束后先确认 `preds.json` 恰好包含 731 条；不足 731 条不能作为全量基线直接报分：
+
+```bash
+uv run --frozen python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+preds = json.loads((Path(os.environ["RUN"]) / "preds.json").read_text())
+print("predictions:", len(preds))
+assert len(preds) == 731, f"Expected 731 predictions, got {len(preds)}"
+PY
+```
+
+### 2. 转换为 SWE-bench Pro patch 格式
+
+mini-swe-agent 的 `preds.json` 是以 `instance_id` 为 key 的字典，不能原样交给官方 Pro harness。用仓库内脚本转成 `[{"instance_id", "patch", "prefix"}, ...]`：
+
+```bash
+uv run --frozen python scripts/pro_preds_to_eval.py \
+  --input "$RUN/preds.json" \
+  --output "$RUN/patches.json" \
+  --prefix nomemory-gpt54
+```
+
+当前 `SWE-bench_Pro-os/swe_bench_pro_eval.py` 接受 CSV 或 JSONL raw sample，但仓库不自带 README 示例中的 `swe_bench_pro_full.csv`。从本仓库已跟踪的 731 条 JSON 生成评测 JSONL：
+
+```bash
+uv run --frozen python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+rows = json.loads(Path("data/swe_bench_pro.json").read_text())
+output = Path(os.environ["RUN"]) / "swe_bench_pro_eval_input.jsonl"
+with output.open("w") as f:
+    for row in rows:
+        f.write(json.dumps(row) + "\n")
+print(f"Wrote {len(rows)} instances to {output}")
+PY
+```
+
+### 3. 安装并固定 SWE-bench Pro evaluator
+
+评测使用 `bbzswcf/SWE-bench_Pro-os`（当前核验 commit：`fdf26d5646055b8bfdf58f4f5c8a63c8fb796d18`）。新机器首次准备：
+
+```bash
+git clone https://github.com/bbzswcf/SWE-bench_Pro-os.git "$EVAL_REPO"
+git -C "$EVAL_REPO" checkout fdf26d5646055b8bfdf58f4f5c8a63c8fb796d18
+cd "$EVAL_REPO"
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+```
+
+若目录已存在，则不要重复 clone；只需核对 commit 并确保 `.venv` 依赖已安装。731 条数据需要的 `run_scripts/`、base Dockerfile 与 instance Dockerfile 在上述 evaluator commit 中均已核对齐全。
+
+### 4. 本地 Docker 正式评测
+
+必须从 `SWE-bench_Pro-os` 根目录启动，因为 evaluator 会通过相对路径读取 `dockerfiles/`：
+
+```bash
+cd "$EVAL_REPO"
+.venv/bin/python swe_bench_pro_eval.py \
+  --raw_sample_path "$RUN/swe_bench_pro_eval_input.jsonl" \
+  --patch_path "$RUN/patches.json" \
+  --output_dir "$RUN/eval" \
+  --scripts_dir "$EVAL_REPO/run_scripts" \
+  --num_workers 16 \
+  --dockerhub_username jefzda \
+  --use_local_docker
+```
+
+- 最终逐题 pass/fail 结果在 `$RUN/eval/eval_results.json`，逐题日志在 `$RUN/eval/<instance_id>/`；总分也会由 evaluator 打印到终端。
+- 评测默认断点续跑：已有 `<prefix>_output.json` 的 instance 会跳过；仅在需要强制重评时加 `--redo`。
+- inference 的 `--workers` 与 evaluation 的 `--num_workers` 是两套独立并发，按机器 CPU、内存、磁盘和 Docker 承载能力分别调整。
+- 不要依赖本机曾经存在但未跟踪的 `SWE-bench_Pro-os/eval_swebench_pro` 包装器；标准可迁移流程是显式调用本仓库的 `scripts/pro_preds_to_eval.py` 和 evaluator 的 `swe_bench_pro_eval.py`。
+
 ### 新实验启动前：核对 prompt 与工具
 
 消融 overlay（如 `swebench_pro_hindsight_only.yaml`）叠在 `swebench_pro.yaml` 上，**只改 `agent.memory` 开关不够**：若不覆盖 `system_template` / `instance_template` / `model.format_error_template`，模型仍按基座 prompt 里的 `memory` / `MEMORY.md` / `session_search` 行事，与实际暴露的工具不一致，实验作废。
